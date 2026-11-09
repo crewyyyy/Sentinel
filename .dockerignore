@@ -1,0 +1,9 @@
+.git
+.env
+**/.env
+**/.env.*
+configs/config.yaml
+bin
+exports
+*.dump
+*.session

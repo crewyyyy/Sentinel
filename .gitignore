@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+configs/config.yaml
+bin/
+coverage*
+*.dump
+*.session
+*.session-journal
+exports/
+*.jsonl
+!testdata/**/*.jsonl

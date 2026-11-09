@@ -1,0 +1,1 @@
+{"update_id":1001,"message":{"message_id":101,"date":1794096000,"chat":{"id":-1001111111111,"type":"supergroup"},"from":{"id":123,"is_bot":false,"first_name":"Fixture"},"text":"Купите мой API дешевле https://t.me/example_bot?start=ref123","entities":[{"type":"url","offset":23,"length":37}]}}

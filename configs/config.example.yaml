@@ -1,0 +1,48 @@
+# IDs below are fictitious. Replace with your managed supergroup, private moderator chat and user IDs.
+telegram:
+  mode: polling
+  chat_ids: [-1001111111111]
+  admin_chat_id: -1002222222222
+  allowed_admin_ids: [111111111]
+moderation:
+  enforcement_enabled: false
+  ruleset_version: v1
+  risk_ai_threshold: 45
+  alert_threshold: 45
+  score_thresholds: [25, 45, 70, 85]
+  report_aliases: ["/report", "!репорт", "!report"]
+  watch_message_edits: true
+  # Weights not supplied here use internal/rules.DefaultConfig(). Bump ruleset_version after changes.
+  weights: {}
+trust:
+  maximum_risk_discount: 20
+  admin_reply_bonus_cap: 15
+  stats_window_days: 30
+ai:
+  enabled: true
+  provider: openai_compatible
+  timeout_seconds: 15
+  max_concurrent: 3
+  optional_daily_request_limit: 200
+  mandatory_jobs_bypass_optional_budget: true
+  review_reported_messages: true
+  # Initial model via AI_MODEL; /model can persist a runtime override in PostgreSQL.
+  # Prices apply only to AI_MODEL, per million tokens in your provider's billing currency.
+  # Zero prices or absent usage means cost unknown, not free.
+  input_price_per_million: 0
+  output_price_per_million: 0
+retention:
+  max_recent_messages_per_chat: 1000
+  messages_days: 7
+  incident_days: 30
+  aggregate_days: 90
+links:
+  allow_domains: [google.com, youtube.com, youtu.be, tiktok.com, github.com]
+  watch_domains: []
+  deny_domains: []
+  # Explicitly verified bot usernames, without @. Suffix bot alone remains a heuristic.
+  known_bots: []
+notifications:
+  batch_window_seconds: 20
+  duplicate_cooldown_seconds: 300
+  send_to_private_admins: false
