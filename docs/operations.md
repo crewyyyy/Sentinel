@@ -67,9 +67,13 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml exec db \
 4. `docker compose ... build sentinel` и `up -d sentinel`. Проверить health, pending lag, delivery, отсутствие второго poller. SIGTERM останавливает workers; незавершённая транзакция откатывается, leases истекают.
 5. Для rollback кода вернуть совместимый image/config. Не применять down к production вслепую.
 
-Runner применяет упорядоченные `0001_init` и `0002_runtime_models` транзакционно под advisory lock, пропускает уже записанные версии. Проверены up/down/up и upgrade с сохранением pending inbox. Новые миграции регистрируйте в `migrations.Ordered()`, не меняйте уже применённый SQL.
+Runner применяет упорядоченные `0001_init`, `0002_runtime_models`, `0003_chat_onboarding` транзакционно под advisory lock, пропускает уже записанные версии. Проверены up/down/up и upgrade с сохранением pending inbox. Новые миграции регистрируйте в `migrations.Ordered()`, не меняйте уже применённый SQL.
 
-Down SQL — **разрушительный** rollback, только на тестовой БД после подтверждённого backup; порядок обратный: `0002`, затем `0001`. Удаление соответствующих version rows на тесте требуется для повторного up. `0002` добавляет runtime-модель, панели/audit и model/prompt metadata попыток; откат теряет эти настройки, но не выполняет санкции.
+Down SQL — **разрушительный** rollback, только на тестовой БД после подтверждённого backup; порядок обратный: `0003`, `0002`, затем `0001`. Удаление соответствующих version rows на тесте требуется для повторного up. `0002` добавляет runtime-модель, панели/audit и model/prompt metadata попыток; `0003` — managed-chat consent, private onboarding requests и audit. Откат теряет соответствующие настройки, но не выполняет санкции.
+
+## Подключение без ручного chat_id
+
+При `auto_discover_chats: true` можно начать с `chat_ids: []`. `/start` в ЛС от allowlisted admin → добавление/повышение бота до admin в группе → privacy notice участникам → подтверждение карточки в ЛС. `/chats` повторно отправляет pending-заявки, если ЛС ранее не было доступно. До подтверждения сообщений группы в journal/AI нет. Удаление бота отключает auto-чат, повторное добавление требует нового подтверждения. Сохранённые consent/IDs входят в backup; changing discovery flag не удаляет уже одобренные чаты. См. [onboarding](chat-onboarding.md).
 
 ## Настройки без исходников
 

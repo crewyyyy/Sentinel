@@ -123,12 +123,14 @@ type MemberState struct {
 	Permissions     string `json:"permissions,omitempty"`
 }
 type Membership struct {
-	ChatID  int64       `json:"chat_id"`
-	ActorID int64       `json:"actor_id"`
-	Date    time.Time   `json:"date"`
-	Old     MemberState `json:"old"`
-	New     MemberState `json:"new"`
-	Self    bool        `json:"self"`
+	ChatType  string      `json:"chat_type,omitempty"`
+	ChatTitle string      `json:"chat_title,omitempty"`
+	ChatID    int64       `json:"chat_id"`
+	ActorID   int64       `json:"actor_id"`
+	Date      time.Time   `json:"date"`
+	Old       MemberState `json:"old"`
+	New       MemberState `json:"new"`
+	Self      bool        `json:"self"`
 }
 type ModerationEvent struct {
 	Source            string    `json:"source"`

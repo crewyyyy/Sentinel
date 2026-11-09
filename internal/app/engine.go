@@ -49,14 +49,6 @@ func NewEngine(s *storage.Store, c *config.Config, admins AdminChecker, botID, u
 	}
 	return &Engine{Store: s, Config: c, Admins: admins, Scanner: urlscan.New(c.Links.AllowDomains, c.Links.WatchDomains, c.Links.DenyDomains, c.Links.KnownBots), Rules: r, BotID: botID, Username: username}
 }
-func (e *Engine) Managed(chat int64) bool {
-	for _, id := range e.Config.Telegram.ChatIDs {
-		if chat == id {
-			return true
-		}
-	}
-	return false
-}
 func (e *Engine) RegisterRules(ctx context.Context) error {
 	snapshot := struct {
 		Rules rules.Config
@@ -124,14 +116,27 @@ func (e *Engine) process(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 	if u.Callback != nil {
 		return e.callback(ctx, tx, u)
 	}
-	if u.Membership != nil && e.Managed(u.Membership.ChatID) {
-		return e.membership(ctx, tx, u)
+	if u.Membership != nil {
+		if u.Membership.Self {
+			return e.selfMembership(ctx, tx, u)
+		}
+		active, err := e.managed(ctx, tx, u.Membership.ChatID)
+		if err != nil {
+			return err
+		}
+		if active {
+			return e.membership(ctx, tx, u)
+		}
 	}
 	if m := u.Message; m != nil {
 		if e.isAdminDestination(m.ChatID) {
 			return e.command(ctx, tx, u)
 		}
-		if !e.Managed(m.ChatID) {
+		active, err := e.observeMessage(ctx, tx, *m)
+		if err != nil {
+			return err
+		}
+		if !active {
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO chats(chat_id,chat_type,username) VALUES($1,$2,$3) ON CONFLICT(chat_id) DO UPDATE SET username=EXCLUDED.username,updated_at=now()`, m.ChatID, m.ChatType, m.ChatUsername); err != nil {

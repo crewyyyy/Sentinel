@@ -22,7 +22,11 @@ func (e *Engine) modelAdmin(ctx context.Context, id int64) (bool, error) {
 	if !e.allowed(id) {
 		return false, nil
 	}
-	for _, chat := range e.Config.Telegram.ChatIDs {
+	ids, err := e.chatIDs(ctx, e.Store.Pool)
+	if err != nil {
+		return false, err
+	}
+	for _, chat := range ids {
 		ok, err := e.authorized(ctx, id, chat)
 		if err != nil || !ok {
 			return false, err
@@ -81,8 +85,12 @@ func (e *Engine) modelCommand(ctx context.Context, tx pgx.Tx, u domain.Update, a
 	return e.queueModelPanel(ctx, tx, id, m.ChatID)
 }
 func (e *Engine) queueModelPanel(ctx context.Context, tx pgx.Tx, id, chat int64) error {
-	d := notify.Delivery{ModelPanelID: id, ChatID: chat, Private: true, OriginChatID: e.Config.Telegram.ChatIDs[0]}
-	_, err := tx.Exec(ctx, `INSERT INTO outbox(idempotency_key,kind,payload) VALUES($1,'model_panel',$2) ON CONFLICT(idempotency_key) DO UPDATE SET status=CASE WHEN outbox.status='processing' THEN 'processing' ELSE 'pending' END,updated_at=now(),available_at=now()`, fmt.Sprintf("model-panel:%d", id), d)
+	origin, err := e.firstChat(ctx, tx)
+	if err != nil {
+		return err
+	}
+	d := notify.Delivery{ModelPanelID: id, ChatID: chat, Private: true, OriginChatID: origin}
+	_, err = tx.Exec(ctx, `INSERT INTO outbox(idempotency_key,kind,payload) VALUES($1,'model_panel',$2) ON CONFLICT(idempotency_key) DO UPDATE SET status=CASE WHEN outbox.status='processing' THEN 'processing' ELSE 'pending' END,updated_at=now(),available_at=now()`, fmt.Sprintf("model-panel:%d", id), d)
 	return err
 }
 func (e *Engine) modelCallback(ctx context.Context, tx pgx.Tx, u domain.Update) error {

@@ -41,6 +41,10 @@ func (e *Engine) authorized(ctx context.Context, id, chat int64) (bool, error) {
 	if id <= 0 || !e.allowed(id) {
 		return false, nil
 	}
+	if chat == 0 {
+		ids, err := e.chatIDs(ctx, e.Store.Pool)
+		return len(ids) == 0, err
+	}
 	return e.Admins.IsAdmin(ctx, chat, id)
 }
 func (e *Engine) audit(ctx context.Context, tx pgx.Tx, u domain.Update, id int64, allowed bool) error {
@@ -49,6 +53,9 @@ func (e *Engine) audit(ctx context.Context, tx pgx.Tx, u domain.Update, id int64
 }
 func (e *Engine) callback(ctx context.Context, tx pgx.Tx, u domain.Update) error {
 	c := u.Callback
+	if strings.HasPrefix(c.Data, "conn:") {
+		return e.connectionCallback(ctx, tx, u)
+	}
 	if strings.HasPrefix(c.Data, "mdl:") {
 		return e.modelCallback(ctx, tx, u)
 	}
@@ -176,9 +183,15 @@ func (e *Engine) text(ctx context.Context, tx pgx.Tx, key string, d notify.Deliv
 	return err
 }
 func (e *Engine) ack(ctx context.Context, tx pgx.Tx, m domain.Message, text string, origin ...int64) error {
-	source := e.Config.Telegram.ChatIDs[0]
+	var source int64
 	if len(origin) > 0 {
 		source = origin[0]
+	} else {
+		var err error
+		source, err = e.firstChat(ctx, tx)
+		if err != nil {
+			return err
+		}
 	}
 	return e.text(ctx, tx, fmt.Sprintf("ack:%d:%d", m.ChatID, m.ID), notify.Delivery{ChatID: m.ChatID, Text: text, Private: e.isAdminDestination(m.ChatID), OriginChatID: source}, "text", "")
 }
@@ -317,7 +330,7 @@ func (e *Engine) controlName(text string) string {
 		cmd = cmd[:i]
 	}
 	switch cmd {
-	case "/status", "/stats", "/case", "/feedback", "/tune", "/review", "/forget", "/attest", "/link", "/reports", "/reportcase", "/resolve", "/model", "/models":
+	case "/status", "/stats", "/case", "/feedback", "/tune", "/review", "/forget", "/attest", "/link", "/reports", "/reportcase", "/resolve", "/model", "/models", "/start", "/chats":
 		return cmd
 	}
 	return ""
@@ -335,10 +348,16 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 	if cmd == "" {
 		return nil
 	}
+	if cmd == "/start" || cmd == "/chats" {
+		return e.chatsCommand(ctx, tx, u)
+	}
 	if cmd == "/model" || cmd == "/models" {
 		return e.modelCommand(ctx, tx, u, parts[1:])
 	}
-	chat := e.Config.Telegram.ChatIDs[0]
+	chat, err := e.firstChat(ctx, tx)
+	if err != nil {
+		return err
+	}
 	var id int64
 	if (cmd == "/case" || cmd == "/feedback" || cmd == "/review" || cmd == "/attest" || cmd == "/link" || cmd == "/resolve") && len(parts) > 1 {
 		var err error
@@ -356,7 +375,14 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 	}
 	if cmd == "/reports" && len(parts) > 1 {
 		value, err := strconv.ParseInt(parts[1], 10, 64)
-		if err != nil || !e.Managed(value) {
+		if err != nil {
+			return e.ack(ctx, tx, *m, "Нужен ID управляемого чата.")
+		}
+		active, err := e.managed(ctx, tx, value)
+		if err != nil {
+			return err
+		}
+		if !active {
 			return e.ack(ctx, tx, *m, "Нужен ID управляемого чата.")
 		}
 		chat = value
@@ -408,7 +434,11 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 			return err
 		}
 		capabilities := ""
-		rows, err := tx.Query(ctx, `SELECT chat_id,COALESCE(features->>'bot_admin',CASE WHEN features->'new'->>'status' IN('administrator','creator') THEN 'true' WHEN features?'new' THEN 'false' END,'unknown') FROM chats WHERE chat_id=ANY($1::bigint[]) ORDER BY chat_id`, e.Config.Telegram.ChatIDs)
+		ids, err := e.chatIDs(ctx, tx)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT chat_id,COALESCE(features->>'bot_admin',CASE WHEN features->'new'->>'status' IN('administrator','creator') THEN 'true' WHEN features?'new' THEN 'false' END,'unknown') FROM chats WHERE chat_id=ANY($1::bigint[]) ORDER BY chat_id`, ids)
 		if err != nil {
 			return err
 		}

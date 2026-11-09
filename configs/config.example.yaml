@@ -1,7 +1,10 @@
-# IDs below are fictitious. Replace with your managed supergroup, private moderator chat and user IDs.
+# IDs below are fictitious. Replace the private moderator destination and allowed user IDs.
 telegram:
   mode: polling
-  chat_ids: [-1001111111111]
+  auto_discover_chats: true
+  # Add/promote the bot from an allowlisted admin, then confirm its private card.
+  # Explicit chat IDs are optional; setting them grants deployment-time consent.
+  chat_ids: []
   admin_chat_id: -1002222222222
   allowed_admin_ids: [111111111]
 moderation:

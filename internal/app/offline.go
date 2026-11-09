@@ -139,8 +139,15 @@ func Replay(r io.Reader, w io.Writer, c rules.Config) error {
 	return json.NewEncoder(w).Encode(result)
 }
 func (e *Engine) Forget(ctx context.Context, chat, user int64) error {
-	if !e.Managed(chat) || user <= 0 {
+	if chat >= 0 || user <= 0 {
 		return fmt.Errorf("managed chat and positive user ID required")
+	}
+	var known bool
+	if err := e.Store.Pool.QueryRow(ctx, `SELECT $2::boolean OR EXISTS(SELECT 1 FROM managed_chats WHERE chat_id=$1 AND approved_at IS NOT NULL)`, chat, e.configuredChat(chat)).Scan(&known); err != nil {
+		return err
+	}
+	if !known {
+		return fmt.Errorf("configured or previously approved chat required")
 	}
 	tx, err := e.Store.Pool.Begin(ctx)
 	if err != nil {

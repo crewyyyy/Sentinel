@@ -17,6 +17,12 @@ var runtimeModelsUp string
 //go:embed 0002_runtime_models.down.sql
 var runtimeModelsDown string
 
+//go:embed 0003_chat_onboarding.up.sql
+var onboardingUp string
+
+//go:embed 0003_chat_onboarding.down.sql
+var onboardingDown string
+
 type Migration struct {
 	Version string
 	SQL     string
@@ -24,8 +30,8 @@ type Migration struct {
 
 // Ordered returns fresh values so callers cannot modify the embedded migration list.
 func Ordered() []Migration {
-	return []Migration{{"0001_init", Up}, {"0002_runtime_models", runtimeModelsUp}}
+	return []Migration{{"0001_init", Up}, {"0002_runtime_models", runtimeModelsUp}, {"0003_chat_onboarding", onboardingUp}}
 }
 
 // Down reverses all embedded migrations, only for disposable databases/explicit destructive rollback.
-var Down = runtimeModelsDown + "\n" + initialDown
+var Down = onboardingDown + "\n" + runtimeModelsDown + "\n" + initialDown

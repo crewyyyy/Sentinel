@@ -75,13 +75,13 @@ func TestCursorZeroAndFIFO(t *testing.T) {
 	}
 	first := msg(1, 123, "Привет")
 	second := msg(2, 123, "после")
-	if err := e.Store.Ingest(ctx, e.BotID, e.Prepare(domain.Update{ID: 0, Message: &first})); err != nil {
+	if err := e.Store.Ingest(ctx, e.BotID, prepared(t, e, domain.Update{ID: 0, Message: &first})); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := e.Store.Offset(ctx, e.BotID); err != nil || n != 0 {
 		t.Fatal(n, err)
 	}
-	if err := e.Store.Ingest(ctx, e.BotID, e.Prepare(domain.Update{ID: 1, Message: &second})); err != nil {
+	if err := e.Store.Ingest(ctx, e.BotID, prepared(t, e, domain.Update{ID: 1, Message: &second})); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.Store.Pool.Exec(ctx, `UPDATE inbox SET available_at=now()+interval '1 hour' WHERE id=0`); err != nil {

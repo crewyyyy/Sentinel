@@ -74,10 +74,18 @@ func testEngine(t *testing.T) *Engine {
 func msg(id, user int64, text string) domain.Message {
 	return domain.Message{ChatID: testChat, ID: id, UserID: &user, Date: time.Now().UTC(), Text: text, ChatType: "supergroup", ContentType: "text", Version: 1}
 }
+func prepared(t *testing.T, e *Engine, u domain.Update) domain.Update {
+	t.Helper()
+	safe, err := e.Prepare(context.Background(), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return safe
+}
 func deliver(t *testing.T, e *Engine, u domain.Update) {
 	t.Helper()
 	ctx := context.Background()
-	u = e.Prepare(u)
+	u = prepared(t, e, u)
 	if err := e.Store.Ingest(ctx, e.BotID, u); err != nil {
 		t.Fatal(err)
 	}

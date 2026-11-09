@@ -225,7 +225,7 @@ func TestRuntimeModelMigrationUpgradePreservesInbox(t *testing.T) {
 	if err := e.Store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n := number(t, e, `SELECT count(*) FROM schema_migrations`); n != 2 {
+	if n := number(t, e, `SELECT count(*) FROM schema_migrations`); n != int64(len(migrations.Ordered())) {
 		t.Fatal(n)
 	}
 	if n := number(t, e, `SELECT count(*) FROM inbox`); n != 1 {

@@ -72,6 +72,19 @@ func TestBoundedSingleDocumentAndSecretSafeErrors(t *testing.T) {
 	}
 }
 
+func TestAutoDiscoveryAllowsEmptyChatIDsOnlyWhenEnabled(t *testing.T) {
+	testEnv(t)
+	input := strings.Replace(validYAML, "chat_ids: [-1001111111111]", "chat_ids: []", 1)
+	c, err := loadTest(t, input)
+	if err != nil || len(c.Telegram.ChatIDs) != 0 || !c.Telegram.AutoDiscoverChats {
+		t.Fatal(c, err)
+	}
+	input = strings.Replace(input, "mode: polling", "mode: polling\n  auto_discover_chats: false", 1)
+	if _, err := loadTest(t, input); err == nil {
+		t.Fatal("empty managed chats without discovery accepted")
+	}
+}
+
 func TestMissingSecrets(t *testing.T) {
 	testEnv(t)
 	t.Setenv("DATABASE_URL", "")

@@ -98,7 +98,7 @@ func TestRuleSnapshotsAndOfflineIsolation(t *testing.T) {
 	}
 	foreign := msg(1, 123, "password=secretvalue")
 	foreign.ChatID = -999
-	u := e.Prepare(domain.Update{ID: 1, Message: &foreign})
+	u := prepared(t, e, domain.Update{ID: 1, Message: &foreign})
 	if u.Message != nil {
 		t.Fatal("collected unmanaged chat")
 	}
@@ -111,11 +111,11 @@ func TestRuleSnapshotsAndOfflineIsolation(t *testing.T) {
 	}
 	private := msg(2, 111, "password=privatevalue")
 	private.ChatID = 111
-	if u := e.Prepare(domain.Update{ID: 2, Message: &private}); u.Message != nil {
+	if u := prepared(t, e, domain.Update{ID: 2, Message: &private}); u.Message != nil {
 		t.Fatal("collected unrelated private text from an admin")
 	}
 	private.Text = "/stats@another_bot"
-	if u := e.Prepare(domain.Update{ID: 3, Message: &private}); u.Message != nil {
+	if u := prepared(t, e, domain.Update{ID: 3, Message: &private}); u.Message != nil {
 		t.Fatal("consumed another bot command")
 	}
 }

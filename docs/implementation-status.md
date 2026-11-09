@@ -15,7 +15,8 @@
 ## Фактически проверено
 
 - `go test ./...`, `go vet ./...`, `go test -race -count=1 -timeout 180s ./...` с `TEST_DATABASE_URL` на локальном PostgreSQL 17, без платных запросов/публичного Telegram.
-- Миграции 0001/0002 up/down/up, повторный migrate и upgrade старой initial-схемы с сохранением pending inbox; FK/unique constraints; атомарный rollback dedup/cursor при неудачной вставке inbox.
+- Миграции 0001/0002/0003 up/down/up, повторный migrate и upgrade старой initial-схемы с сохранением pending inbox; FK/unique constraints; атомарный rollback dedup/cursor при неудачной вставке inbox.
+- Auto-onboarding: запуск с пустым `chat_ids`, ограниченные кандидаты `my_chat_member`, private owner/receipt/RBAC/expiry confirmation, pre-consent и старый queued backlog не собираются, restart/DM retry, removal/stale event/rejoin, явный configured consent. Dynamic chat IDs участвуют в глобальной авторизации модели; нет mutable Config/cache.
 - `/model`: пагинация, поиск, отдельное подтверждение, callback receipt/owner/current-rights/expiry, отказ при устаревшей настройке другого админа, сохранение после restart и новая модель для retry. Меню не доставляется в public destination или после отзыва прав. Каталог ограничен по размеру и не следует redirect; API body ошибок/ключи не выводятся.
 - First observed после restart и очистки; независимость двух чатов; edit/replay без двойных counters; edit после prune получает следующую ревизию; late review не переписывает актуальный кейс.
 - Четыре MUST даже при max trust; mandatory jobs claim при нулевом optional budget; конкурентные claims, lease expiry, stale-worker fencing, provider retry; LLM malformed schema/429/5xx/timeout, injection data isolation и usage unknown.
@@ -25,11 +26,11 @@
 - Journal cap 1000 + TTL, pending evidence не теряется; unmanaged messages не сохраняются; credentials редактируются в journal/jobs/cards и перед внешним review.
 - Fake SDK send и polling offset/429; deep links/UTF-16/IDN/hidden/caption entities; HTML card/negative callback paths через domain integration.
 - Docker image собран, runtime user `sentinel`, offline `validate`/`inspect` проходят с `--read-only --network none`; Compose config валиден. Реальная DB-backed health handler проверена локально.
-- Финальный image дважды применил миграции к новой disposable DB; `pg_dump -Fc` → `pg_restore --exit-on-error` в ещё одну новую DB восстановил обе migration records, сохранённую runtime-модель, durable inbox event и cursor. Это smoke restore, не доказательство production RPO/RTO.
+- Финальный image дважды применил миграции к новой disposable DB; `pg_dump -Fc` → `pg_restore --exit-on-error` в ещё одну новую DB восстановил три migration records, runtime-модель, одобренный chat consent, durable inbox event и cursor. Отдельно проверен upgrade с предыдущего Docker image (схема 0001/0002) до 0003. Это smoke restore, не доказательство production RPO/RTO.
 
 ## Что остаётся честным ограничением
 
-1. Live smoke: `getMe` подтвердил доступность бота; внешний subscription-маршрут на вымышленном приветствии вернул HTTP 200, семь полей JSON, `legitimate`, usage и `finish_reason=stop` после исправления JSON-mode envelope (`review_v2`). Это не проверка реальной группы, биллинга или качества классификации. Нужны managed chat IDs и ручная проверка BotFather/прав/доставки/реальных transitions; запущенного production poller пока нет.
+1. Live smoke: `getMe` подтвердил доступность бота; внешний subscription-маршрут на вымышленном приветствии вернул HTTP 200, семь полей JSON, `legitimate`, usage и `finish_reason=stop` после исправления JSON-mode envelope (`review_v2`). Это не проверка реальной группы, биллинга или качества классификации. Групповой ID можно получить через auto-onboarding с подтверждением в ЛС, но реальное добавление, BotFather/права/доставка/transitions ещё требуют ручной проверки; запущенного production poller пока нет.
 2. В этом релизе polling only, без webhook, reactions, MTProto Admin Log и trusted-bot integration. Нет универсального deleted-message source; deletion unknown. Public username deeplinks заменены стабильными private supergroup links.
 3. Report rate-limit сохраняет дополнительные жалобы pending и отправляет сводку, не отменяя AI review; `/reports [CHAT_ID]` показывает старейшие десять, `/reportcase REPORT_ID` открывает кейс. Веб-интерфейса и массовых операторских операций нет. ID platform event для ручного `/link` пока берётся из БД.
 4. `/review` обеспечивает один review актуальной ревизии, не force-rerun уже готового результата. Hot tuning правил не поддержан; `/tune` — инструкция, изменение YAML требует validate/version/restart. Модель отдельно меняется через `/model` без restart с аудитом, привязкой кнопок и проверкой прав во всех чатах.

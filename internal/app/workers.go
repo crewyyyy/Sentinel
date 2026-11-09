@@ -108,6 +108,10 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	if err = tx.Commit(ctx); err != nil {
 		return true, err
 	}
+	retryBeforeSend := func(code string, delay time.Duration) (bool, error) {
+		_, err := e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='pending',lease_until=NULL,available_at=now()+$3::interval,last_error=$4 WHERE id=$1 AND lease_token=$2 AND status='processing'`, id, token, delay.String(), code)
+		return true, err
+	}
 	var d struct {
 		notify.Delivery
 		CallbackID string `json:"callback_id"`
@@ -118,16 +122,20 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	if d.Private && d.IncidentID == 0 && d.ModelPanelID == 0 && kind != "callback" {
 		private, checkErr := n.PrivateDestination(ctx, d.ChatID)
 		if checkErr != nil {
-			return true, checkErr
+			return retryBeforeSend("destination_unavailable", max(10*time.Second, telegram.RetryDelay(checkErr)))
 		}
 		if !private {
 			_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='pending',lease_until=NULL,available_at=now()+interval '1 hour',last_error='destination_not_private' WHERE id=$1 AND lease_token=$2`, id, token)
 			return true, err
 		}
 		if d.ChatID > 0 {
-			allowed, authErr := e.authorized(ctx, d.ChatID, d.OriginChatID)
+			allowed := e.allowed(d.ChatID)
+			var authErr error
+			if !d.OperatorOnly {
+				allowed, authErr = e.authorized(ctx, d.ChatID, d.OriginChatID)
+			}
 			if authErr != nil {
-				return true, authErr
+				return retryBeforeSend("authorization_unavailable", max(10*time.Second, telegram.RetryDelay(authErr)))
 			}
 			if !allowed {
 				_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='done',lease_until=NULL,last_error='recipient_not_authorized',result='{"delivery":"unavailable"}' WHERE id=$1 AND lease_token=$2`, id, token)
@@ -138,6 +146,34 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	text := d.Text
 	var kb *models.InlineKeyboardMarkup
 	var msgID int64
+	if d.ConnectionID > 0 {
+		var owner, chat, revision int64
+		var title, status string
+		var expires time.Time
+		err = e.Store.Pool.QueryRow(ctx, `SELECT owner_user_id,chat_id,revision,title,status,expires_at,COALESCE(telegram_message_id,0) FROM chat_connection_requests WHERE id=$1`, d.ConnectionID).Scan(&owner, &chat, &revision, &title, &status, &expires, &msgID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return true, err
+		}
+		if err != nil || owner != d.ChatID || !e.allowed(owner) || expires.Before(time.Now()) || (!e.Config.Telegram.AutoDiscoverChats && status == "pending") {
+			_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='done',lease_until=NULL,last_error='connection_unavailable',result='{"delivery":"unavailable"}' WHERE id=$1 AND lease_token=$2`, id, token)
+			return true, err
+		}
+		if status == "pending" {
+			bot, valid := e.botID()
+			if !valid {
+				return true, fmt.Errorf("bot identity unavailable")
+			}
+			admin, err := e.Admins.IsAdmin(ctx, chat, bot)
+			if err != nil {
+				return retryBeforeSend("bot_rights_unavailable", max(10*time.Second, telegram.RetryDelay(err)))
+			}
+			if !admin {
+				_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='pending',lease_until=NULL,available_at=now()+interval '30 seconds',last_error='bot_not_administrator' WHERE id=$1 AND lease_token=$2`, id, token)
+				return true, err
+			}
+		}
+		text, kb = notify.RenderConnection(d.ConnectionID, revision, chat, title, status)
+	}
 	if d.ModelPanelID > 0 {
 		var panel []byte
 		var owner, chat int64
@@ -159,7 +195,7 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 		}
 		private, checkErr := n.PrivateDestination(ctx, chat)
 		if checkErr != nil {
-			return true, checkErr
+			return retryBeforeSend("destination_unavailable", max(10*time.Second, telegram.RetryDelay(checkErr)))
 		}
 		if !private {
 			_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='pending',lease_until=NULL,available_at=now()+interval '1 hour',last_error='destination_not_private' WHERE id=$1 AND lease_token=$2`, id, token)
@@ -187,7 +223,7 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 		if d.ChatID > 0 {
 			authorized, authErr := e.authorized(ctx, d.ChatID, c.Message.ChatID)
 			if authErr != nil {
-				return true, authErr
+				return retryBeforeSend("authorization_unavailable", max(10*time.Second, telegram.RetryDelay(authErr)))
 			}
 			if !authorized {
 				_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='done',lease_until=NULL,last_error='recipient_not_authorized',result='{"delivery":"unavailable"}' WHERE id=$1 AND lease_token=$2`, id, token)
@@ -196,7 +232,7 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 		}
 		private, checkErr := n.PrivateDestination(ctx, d.ChatID)
 		if checkErr != nil {
-			return true, checkErr
+			return retryBeforeSend("destination_unavailable", max(10*time.Second, telegram.RetryDelay(checkErr)))
 		}
 		if !private {
 			_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='pending',lease_until=NULL,available_at=now()+interval '1 hour',last_error='destination_not_private' WHERE id=$1 AND lease_token=$2`, id, token)
@@ -250,6 +286,11 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	if tag.RowsAffected() != 1 {
 		return true, fmt.Errorf("outbox lease lost; delivery outcome may be ambiguous")
 	}
+	if d.ConnectionID > 0 {
+		if _, err = finish.Exec(ctx, `UPDATE chat_connection_requests SET telegram_message_id=$2 WHERE id=$1`, d.ConnectionID, msgID); err != nil {
+			return true, err
+		}
+	}
 	if d.ModelPanelID > 0 {
 		if _, err = finish.Exec(ctx, `UPDATE model_panels SET telegram_message_id=$2 WHERE id=$1`, d.ModelPanelID, msgID); err != nil {
 			return true, err
@@ -279,6 +320,10 @@ func (e *Engine) Cleanup(ctx context.Context) error {
 		{`DELETE FROM outbox WHERE kind='model_panel' AND (payload->>'model_panel_id')::bigint IN(SELECT id FROM model_panels WHERE expires_at<now()) AND status<>'processing'`, nil},
 		{`DELETE FROM model_panels WHERE expires_at<now() AND NOT EXISTS(SELECT 1 FROM outbox WHERE kind='model_panel' AND (payload->>'model_panel_id')::bigint=model_panels.id AND status='processing')`, nil},
 		{`DELETE FROM model_change_events WHERE created_at<now()-interval '90 days'`, nil},
+		{`DELETE FROM outbox WHERE kind='chat_connection' AND (payload->>'connection_id')::bigint IN(SELECT id FROM chat_connection_requests WHERE expires_at<now()) AND status<>'processing'`, nil},
+		{`DELETE FROM chat_connection_requests WHERE expires_at<now() AND NOT EXISTS(SELECT 1 FROM outbox WHERE kind='chat_connection' AND (payload->>'connection_id')::bigint=chat_connection_requests.id AND status='processing')`, nil},
+		{`DELETE FROM chat_connection_events WHERE created_at<now()-interval '90 days'`, nil},
+		{`DELETE FROM managed_chats WHERE NOT active AND source='onboarding' AND approved_at IS NULL AND updated_at<now()-interval '24 hours' AND NOT EXISTS(SELECT 1 FROM chat_connection_requests r WHERE r.chat_id=managed_chats.chat_id)`, nil},
 		{`DELETE FROM feedback_events WHERE incident_id IN(SELECT id FROM incidents WHERE retain_until<now())`, nil},
 		{`DELETE FROM alerts WHERE incident_id IN(SELECT id FROM incidents WHERE retain_until<now())`, nil},
 		{`DELETE FROM outbox WHERE (payload->>'incident_id')::bigint IN(SELECT id FROM incidents WHERE retain_until<now())`, nil},

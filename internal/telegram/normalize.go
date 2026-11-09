@@ -19,6 +19,7 @@ type user struct {
 	Bot      bool   `json:"is_bot"`
 }
 type chat struct {
+	Title    string `json:"title"`
 	ID       int64  `json:"id"`
 	Type     string `json:"type"`
 	Username string `json:"username"`
@@ -109,7 +110,7 @@ func Decode(raw json.RawMessage) (domain.Update, error) {
 		cm = w.Self
 	}
 	if cm != nil {
-		u.Membership = &domain.Membership{ChatID: cm.Chat.ID, ActorID: cm.From.ID, Date: time.Unix(cm.Date, 0).UTC(), Old: normalizeMember(cm.Old), New: normalizeMember(cm.New), Self: w.Self != nil}
+		u.Membership = &domain.Membership{ChatType: cm.Chat.Type, ChatTitle: cm.Chat.Title, ChatID: cm.Chat.ID, ActorID: cm.From.ID, Date: time.Unix(cm.Date, 0).UTC(), Old: normalizeMember(cm.Old), New: normalizeMember(cm.New), Self: w.Self != nil}
 	}
 	if c := w.Callback; c != nil {
 		x := domain.Callback{ID: c.ID, UserID: c.From.ID, Data: c.Data}

@@ -19,31 +19,48 @@ import (
 	"sentinel/internal/telegram"
 )
 
-func (e *Engine) Prepare(u domain.Update) domain.Update {
+func (e *Engine) Prepare(ctx context.Context, u domain.Update) (domain.Update, error) {
 	if m := u.Message; m != nil {
-		if !e.Managed(m.ChatID) && !e.isAdminDestination(m.ChatID) {
+		active, err := e.observeMessage(ctx, e.Store.Pool, *m)
+		if err != nil {
+			return domain.Update{}, err
+		}
+		if !active && (!e.isAdminDestination(m.ChatID) || e.controlName(m.Content()) == "") {
 			u.Message = nil
-			return u
+		} else {
+			m.ContentHash = ""
+			m.ContentHash = fingerprint(*m)
+			m.URLs = e.Scanner.Scan(*m)
+			if m.Reply != nil {
+				m.Reply.ContentHash = ""
+				m.Reply.ContentHash = fingerprint(*m.Reply)
+				m.Reply.URLs = e.Scanner.Scan(*m.Reply)
+			}
+			safe := privacy.Message(*m)
+			u.Message = &safe
 		}
-		if !e.Managed(m.ChatID) && e.controlName(m.Content()) == "" {
-			u.Message = nil
-			return u
-		}
-		m.ContentHash = ""
-		m.ContentHash = fingerprint(*m)
-		m.URLs = e.Scanner.Scan(*m)
-		if m.Reply != nil {
-			m.Reply.ContentHash = ""
-			m.Reply.ContentHash = fingerprint(*m.Reply)
-			m.Reply.URLs = e.Scanner.Scan(*m.Reply)
-		}
-		safe := privacy.Message(*m)
-		u.Message = &safe
 	}
-	if u.Membership != nil && !e.Managed(u.Membership.ChatID) {
-		u.Membership = nil
+	if m := u.Membership; m != nil {
+		active, err := e.managed(ctx, e.Store.Pool, m.ChatID)
+		if err != nil {
+			return domain.Update{}, err
+		}
+		if !active {
+			eligible, err := e.discoverable(ctx, m)
+			if err != nil {
+				return domain.Update{}, err
+			}
+			if !eligible {
+				u.Membership = nil
+			}
+		}
+		if u.Membership != nil {
+			copy := *m
+			copy.ChatTitle = privacy.Limit(privacy.Redact(copy.ChatTitle), 128)
+			u.Membership = &copy
+		}
 	}
-	return u
+	return u, nil
 }
 func (e *Engine) Poll(ctx context.Context, p *telegram.Poller) error {
 	last, err := e.Store.Offset(ctx, e.BotID)
@@ -81,7 +98,14 @@ func (e *Engine) Poll(ctx context.Context, p *telegram.Poller) error {
 				}
 				break
 			}
-			safe := e.Prepare(u)
+			safe, prepareErr := e.Prepare(ctx, u)
+			if prepareErr != nil {
+				slog.Error("chat consent lookup failed; no acknowledgement advanced")
+				if !wait(ctx, 5*time.Second) {
+					return ctx.Err()
+				}
+				break
+			}
 			if err = e.Store.Ingest(ctx, e.BotID, safe); err != nil {
 				slog.Error("durable ingest failed; no acknowledgement advanced", "update_id", u.ID)
 				if !wait(ctx, 5*time.Second) {
@@ -172,7 +196,11 @@ func Run(ctx context.Context, c *config.Config) error {
 	if err = e.RegisterRules(ctx); err != nil {
 		return err
 	}
-	for _, chat := range c.Telegram.ChatIDs {
+	managedIDs, err := e.chatIDs(ctx, s.Pool)
+	if err != nil {
+		return err
+	}
+	for _, chat := range managedIDs {
 		admin, err := sender.IsAdmin(ctx, chat, id)
 		if err != nil {
 			return fmt.Errorf("cannot verify bot membership in configured chat")

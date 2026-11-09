@@ -102,7 +102,9 @@ func Render(c Card) (string, *models.InlineKeyboardMarkup) {
 }
 
 type Delivery struct {
+	ConnectionID int64  `json:"connection_id,omitempty"`
 	ModelPanelID int64  `json:"model_panel_id,omitempty"`
+	OperatorOnly bool   `json:"operator_only,omitempty"`
 	Private      bool   `json:"private"`
 	OriginChatID int64  `json:"origin_chat_id,omitempty"`
 	IncidentID   int64  `json:"incident_id"`

@@ -39,10 +39,11 @@ type Config struct {
 	HealthAddr    string        `yaml:"-"`
 }
 type Telegram struct {
-	Mode            string  `yaml:"mode"`
-	ChatIDs         []int64 `yaml:"chat_ids"`
-	AdminChatID     int64   `yaml:"admin_chat_id"`
-	AllowedAdminIDs []int64 `yaml:"allowed_admin_ids"`
+	Mode              string  `yaml:"mode"`
+	AutoDiscoverChats bool    `yaml:"auto_discover_chats"`
+	ChatIDs           []int64 `yaml:"chat_ids"`
+	AdminChatID       int64   `yaml:"admin_chat_id"`
+	AllowedAdminIDs   []int64 `yaml:"allowed_admin_ids"`
 }
 type Moderation struct {
 	EnforcementEnabled bool           `yaml:"enforcement_enabled"`
@@ -91,7 +92,7 @@ type Notifications struct {
 
 func Defaults() *Config {
 	return &Config{
-		Telegram:      Telegram{Mode: ModePolling},
+		Telegram:      Telegram{Mode: ModePolling, AutoDiscoverChats: true},
 		Moderation:    Moderation{RulesetVersion: "v1", RiskAIThreshold: 45, AlertThreshold: 45, ScoreThresholds: []int{25, 45, 70, 85}, ReportAliases: []string{"/report", "!репорт", "!report"}, WatchMessageEdits: true},
 		Trust:         Trust{MaximumRiskDiscount: 20, AdminReplyBonusCap: 15, StatsWindowDays: 30},
 		AI:            AI{Enabled: true, Provider: "openai_compatible", TimeoutSeconds: 15, MaxConcurrent: 3, OptionalDailyRequestLimit: 200, MandatoryJobsBypassOptionalBudget: true, ReviewReportedMessages: true},
@@ -155,8 +156,8 @@ func (c *Config) Validate() error {
 	if c.BotToken == "" {
 		return fmt.Errorf("TELEGRAM_BOT_TOKEN required")
 	}
-	if len(c.Telegram.ChatIDs) == 0 || c.Telegram.AdminChatID == 0 || len(c.Telegram.AllowedAdminIDs) == 0 {
-		return fmt.Errorf("managed chats, admin destination and allowlisted admin IDs required")
+	if (len(c.Telegram.ChatIDs) == 0 && !c.Telegram.AutoDiscoverChats) || c.Telegram.AdminChatID == 0 || len(c.Telegram.AllowedAdminIDs) == 0 {
+		return fmt.Errorf("configured chats or auto discovery, admin destination and allowlisted admin IDs required")
 	}
 	seen := map[int64]bool{}
 	for _, id := range c.Telegram.ChatIDs {
