@@ -1,20 +1,24 @@
 # Состояние реализации
 
-Итоговые проверки выполнены локально **2026-11-09** на текущем исходном коде и заново собранном `sentinel:local`. Это **работающий Bot API MVP с инструментами Phase 5**, не полный production sign-off всего Task.md. Оригинальные Task.md/CLAUDE.md не переписывались и их чекбоксы не отмечались без оснований.
+Проверки исходного кода и образа `sentinel:modular-check` выполнены **2026-11-10**. Это работающий Bot API MVP с инструментами Phase 5, не полная приёмка Task.md. Task.md/CLAUDE.md и их чекбоксы не изменялись.
 
 | Фаза Task.md | Результат |
 |---|---|
 | 0 — фундамент | Go module, strict typed env/YAML, observe-only validation, lifecycle, Docker/Compose/CI, docs. Live Telegram checklist остаётся ручным |
 | 1 — наблюдение | Controlled polling, durable dedup/inbox/cursor, нормализация, Postgres journal/revisions, TTL/cap, message identity keys, counters/reply graph, sender_chat. Restart/duplicate/edit/prune сценарии проверены локально |
-| 2 — риск/trust | URL/entities/caption/quote/IDNA/PSL; четыре MUST, extra unknown-Telegram/scan-limit review; настраиваемые веса и thresholds; capped trust; повторная реклама/links; 30+ table cases |
+| 2 — риск/trust | Общий модульный Analyzer для production/inspect/replay, каталог и YAML matchers/caps; URL/entities/caption/quote/IDNA/PSL; четыре MUST, unknown-Telegram/scan-limit review; ref-параметры и bot-компоненты; capped trust. 101 полная v1-оценка совпадает с исходным движком |
 | 3 — LLM | Provider interface, compatible HTTP, versioned prompt, strict enums/required fields/limits, small context, redaction/pseudonyms, durable priority jobs/attempts/fencing, retry/429/circuit breaker, optional request budget, usage/estimated cost, `/model` с пагинацией/подтверждением и персистентной сменой для новых попыток. Не реализованы token/money hard budgets и отдельные provider-specific dialects |
-| 4 — карточки/репорты/факты | Group/private destinations, merge/edit/outbox, stable private supergroup/topic links, RBAC+current rights+card binding, reply-only dedup/rate-limited reports, platform transitions, admin attestation/manual relation. Проверено fake API/DB, не реальным Telegram token |
+| 4 — карточки/репорты/факты | Group/private destinations, короткие русские карточки, custom emoji с fallback, исправленное закрытие connection-карточки, немедленная доставка первых уведомлений. Stable supergroup/topic links, RBAC, reply-only dedup/rate-limited reports, platform transitions, attestation/manual relation. Полная матрица проверена fake API/DB; доставка approved-карточки подтверждена live |
 | 5 — стабилизация | Feedback audit и явный `/resolve`, conflict exclusion, export label-time snapshots с privacy-review, campaign/time holdout, deterministic replay, status/stats/case/tune/forget, очередь `/reports` + `/reportcase`, race/backup-restore/container build. Полная latency observability и реальный corpus/quality measurement остаются эксплуатационной приёмкой |
 | 6 — MTProto | Не реализован и не включён; отдельный будущий проект при доказанной необходимости |
 
 ## Фактически проверено
 
 - `go test ./...`, `go vet ./...`, `go test -race -count=1 -timeout 180s ./...` с `TEST_DATABASE_URL` на локальном PostgreSQL 17, без платных запросов/публичного Telegram.
+- Модульный движок: 101 неизменяемая полная v1-оценка, required-модули, validation, caps/trust без отмены mandatory, порядок/дедуп сигналов, immutable snapshot и concurrent reuse. `REF` в query keys, компоненты `ref123`, отрицательный `reference`; несколько сигналов дают одну durable job, restart/edit сохраняют старый payload.
+- Старый и неизвестный будущий формат inbox не перепарсиваются по offsets замаскированного текста. Неполные признаки дают mandatory review без утверждения о рефералке; replay отдельно считает `IncompleteFeatures`. Metadata extraction не уходит внешнему AI.
+- Privacy-регрессии для `password=@name` и URL в значении секрета: detached facts удаляются с сохранением coverage/review. Повторяющиеся обфусцированные ссылки не скрывают 33-й кандидат; malformed query сохраняет partial coverage.
+- Реальные CLI `modules`, 12 `inspect` сценариев и `replay` на четырёх samples выполнены в контейнере `--read-only --network none`, без runtime credentials.
 - Миграции 0001/0002/0003 up/down/up, повторный migrate и upgrade старой initial-схемы с сохранением pending inbox; FK/unique constraints; атомарный rollback dedup/cursor при неудачной вставке inbox.
 - Auto-onboarding: запуск с пустым `chat_ids`, ограниченные кандидаты `my_chat_member`, private owner/receipt/RBAC/expiry confirmation, pre-consent и старый queued backlog не собираются, restart/DM retry, removal/stale event/rejoin, явный configured consent. Dynamic chat IDs участвуют в глобальной авторизации модели; нет mutable Config/cache.
 - `/model`: пагинация, поиск, отдельное подтверждение, callback receipt/owner/current-rights/expiry, отказ при устаревшей настройке другого админа, сохранение после restart и новая модель для retry. Меню не доставляется в public destination или после отзыва прав. Каталог ограничен по размеру и не следует redirect; API body ошибок/ключи не выводятся.
@@ -30,7 +34,7 @@
 
 ## Что остаётся честным ограничением
 
-1. Live smoke: `getMe` подтвердил доступность бота; внешний subscription-маршрут на вымышленном приветствии вернул HTTP 200, семь полей JSON, `legitimate`, usage и `finish_reason=stop` после исправления JSON-mode envelope (`review_v2`). Это не проверка реальной группы, биллинга или качества классификации. Групповой ID можно получить через auto-onboarding с подтверждением в ЛС, но реальное добавление, BotFather/права/доставка/transitions ещё требуют ручной проверки; запущенного production poller пока нет.
+1. Production обновлён до `v2-modular-ref`, `referral_cues` включён. Health и единственная bot advisory lock проверены; startup без ошибок. Снимок новой политики зарегистрирован, хеши прежних AI payload и оценок сохранены. Перед выкладкой pending AI jobs не было; сценарии их сохранения проверены интеграционными тестами. Обновление approved-карточки подключения доставлено через outbox после исправления empty keyboard. `getMe` и синтетический запрос к AI endpoint ранее прошли smoke. Полная ручная матрица BotFather/прав, всех карточек и platform transitions, качество классификации и биллинг этим не подтверждены.
 2. В этом релизе polling only, без webhook, reactions, MTProto Admin Log и trusted-bot integration. Нет универсального deleted-message source; deletion unknown. Public username deeplinks заменены стабильными private supergroup links.
 3. Report rate-limit сохраняет дополнительные жалобы pending и отправляет сводку, не отменяя AI review; `/reports [CHAT_ID]` показывает старейшие десять, `/reportcase REPORT_ID` открывает кейс. Веб-интерфейса и массовых операторских операций нет. ID platform event для ручного `/link` пока берётся из БД.
 4. `/review` обеспечивает один review актуальной ревизии, не force-rerun уже готового результата. Hot tuning правил не поддержан; `/tune` — инструкция, изменение YAML требует validate/version/restart. Модель отдельно меняется через `/model` без restart с аудитом, привязкой кнопок и проверкой прав во всех чатах.

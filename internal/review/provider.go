@@ -128,6 +128,11 @@ func (p *Compatible) Review(ctx context.Context, r domain.ReviewRequest) (domain
 		m.ReplyID = 0
 		m.Username = ""
 		m.ChatUsername = ""
+		// Local extractor metadata adds no context beyond the already supplied signals and URLs.
+		m.Mentions = nil
+		m.FeaturesVersion = 0
+		m.FeaturesPartial = false
+		m.URLsPartial = false
 		m.Date = time.Time{}
 		m.EditedAt = nil
 		if m.UserID != nil {
@@ -154,6 +159,9 @@ func (p *Compatible) Review(ctx context.Context, r domain.ReviewRequest) (domain
 		}
 		for i := range us {
 			us[i].Value = privacy.Limit(us[i].Value, 384)
+			us[i].QueryKeys = nil
+			us[i].QueryKeysPartial = false
+			us[i].TelegramUsername = ""
 		}
 		return us
 	}

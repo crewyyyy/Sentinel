@@ -225,7 +225,7 @@ func (e *Engine) chatsCommand(ctx context.Context, tx pgx.Tx, u domain.Update) e
 	if err != nil {
 		return err
 	}
-	text := "Подключение чатов: добавьте бота в группу и выдайте статус admin без ban/delete, затем подтвердите карточку в ЛС. Перед подтверждением уведомите участников об обработке и внешнем AI.\n\nДоступные подключённые чаты:"
+	text := notify.HelpHeading() + "\nПроверяю новые сообщения и присылаю карточки для решения. Кнопки сохраняют метки; бот не банит и не удаляет сообщения.\n\n<b>Подключить группу</b>\nДобавьте бота администратором без прав банить/удалять. Уведомите участников об обработке и внешнем AI, затем подтвердите карточку в ЛС.\n\n<b>Подключённые чаты</b>"
 	shown := 0
 	unavailable := false
 	for _, chat := range ids {
@@ -236,12 +236,12 @@ func (e *Engine) chatsCommand(ctx context.Context, tx pgx.Tx, u domain.Update) e
 			continue
 		}
 		if allowed && shown < 20 {
-			text += fmt.Sprintf("\n• %d", chat)
+			text += fmt.Sprintf("\n<code>%d</code>", chat)
 			shown++
 		}
 	}
 	if shown == 0 {
-		text += "\nПока нет доступных или подтверждённых правами чатов."
+		text += "\nПока нет. Подтвердите заявку в ЛС."
 	}
 	if unavailable {
 		text += "\nЧасть чатов не показана: текущие права проверить не удалось."
@@ -270,6 +270,6 @@ func (e *Engine) chatsCommand(ctx context.Context, tx pgx.Tx, u domain.Update) e
 			return err
 		}
 	}
-	text += fmt.Sprintf("\n\nОжидающих заявок: %d (показаны первые 20). Карточки будут отправлены в ЛС после проверки прав.\n/model — выбрать модель; /status — состояние.", len(requests))
+	text += fmt.Sprintf("\n\nЗаявок: %d (до 20 за раз). Карточки придут в ЛС после проверки прав.\n\n/status · состояние\n/model · модель AI\n/report · жалоба ответом в группе\n\n<i>Доступны только новые сообщения. Журнал ограничен; удаление сообщения обычно неизвестно.</i>", len(requests))
 	return e.text(ctx, tx, fmt.Sprintf("ack:%d:%d", m.ChatID, m.ID), notify.Delivery{ChatID: m.ChatID, Private: true, OperatorOnly: true, Text: text}, "text", "")
 }

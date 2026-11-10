@@ -38,7 +38,7 @@ func panelState(t *testing.T, e *Engine, id int64) notify.ModelPanel {
 	}
 	return p
 }
-func drainModelOutbox(t *testing.T, e *Engine, n *notifierFake) {
+func drainModelOutbox(t *testing.T, e *Engine, n Notifier) {
 	t.Helper()
 	for i := 0; i < 30; i++ {
 		worked, err := e.DeliverOne(context.Background(), n)
@@ -106,7 +106,7 @@ func TestRuntimeModelPagesConfirmRetryAndRestart(t *testing.T) {
 	if n := number(t, e, `SELECT count(*) FROM model_change_events`); n != 1 {
 		t.Fatal("stale callback changed model", n)
 	}
-	restarted := NewEngine(e.Store, e.Config, e.Admins, e.BotID, e.Username)
+	restarted := mustEngine(t, e.Store, e.Config, e.Admins, e.BotID, e.Username)
 	job, err := restarted.Store.ClaimAI(ctx, 0, time.Minute, restarted.Config.AI.Model)
 	if err != nil || job == nil {
 		t.Fatal("change did not unblock pending review", job, err)

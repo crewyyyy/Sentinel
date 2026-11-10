@@ -73,7 +73,7 @@ func TestChatDiscoveryConsentRestartRemovalAndRejoin(t *testing.T) {
 	m = msg(102, 123, "after consent")
 	m.ChatID = discoveredChat
 	deliver(t, e, domain.Update{ID: 8, Message: &m})
-	e = NewEngine(e.Store, e.Config, e.Admins, e.BotID, e.Username)
+	e = mustEngine(t, e.Store, e.Config, e.Admins, e.BotID, e.Username)
 	m = msg(103, 123, "after restart")
 	m.ChatID = discoveredChat
 	deliver(t, e, domain.Update{ID: 9, Message: &m})
@@ -222,7 +222,7 @@ func TestDiscoveryPendingSurvivesRestartAndStartReschedulesDM(t *testing.T) {
 	if _, err := e.DeliverOne(context.Background(), n); err != nil {
 		t.Fatal(err)
 	}
-	e = NewEngine(e.Store, e.Config, e.Admins, e.BotID, e.Username)
+	e = mustEngine(t, e.Store, e.Config, e.Admins, e.BotID, e.Username)
 	m := msg(2, 111, "/start")
 	m.ChatID = 111
 	deliver(t, e, domain.Update{ID: 2, Message: &m})

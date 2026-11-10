@@ -13,7 +13,7 @@ func TestModelPagesConfirmationAndCallbackBounds(t *testing.T) {
 	}
 	p := ModelPanel{Models: ids, Selected: -1, Revision: 9}
 	text, kb := RenderModels(123, p, ids[0])
-	if !strings.Contains(text, "Страница 1/3") || len(kb.InlineKeyboard) != 7 || !strings.HasPrefix(kb.InlineKeyboard[0][0].Text, "✓ ") {
+	if !strings.Contains(text, "Страница 1/3") || len(kb.InlineKeyboard) != 7 || kb.InlineKeyboard[0][0].Style != "primary" || kb.InlineKeyboard[0][0].IconCustomEmojiID != iconCheck {
 		t.Fatal(text, kb)
 	}
 	for _, page := range []int{0, 1, 2} {

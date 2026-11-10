@@ -36,7 +36,7 @@ func (e *Engine) reportQueue(ctx context.Context, tx pgx.Tx, m domain.Message, c
 	if len(lines) == 1 {
 		lines = append(lines, "Нет ожидающих жалоб.")
 	}
-	return e.ack(ctx, tx, m, strings.Join(lines, "\n\n"), chat)
+	return e.ackHTML(ctx, tx, m, strings.Join(lines, "\n\n"), chat)
 }
 func (e *Engine) reportCase(ctx context.Context, tx pgx.Tx, u domain.Update, id int64) error {
 	var chat, targetID int64

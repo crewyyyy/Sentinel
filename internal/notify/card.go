@@ -3,12 +3,13 @@ package notify
 
 import (
 	"fmt"
-	"github.com/go-telegram/bot/models"
 	"html"
+	"strings"
+
+	"github.com/go-telegram/bot/models"
 	"sentinel/internal/domain"
 	"sentinel/internal/privacy"
 	"sentinel/internal/telegram"
-	"strings"
 )
 
 type Card struct {
@@ -27,78 +28,161 @@ type Card struct {
 
 func Render(c Card) (string, *models.InlineKeyboardMarkup) {
 	esc := func(s string) string { return html.EscapeString(privacy.Redact(s)) }
-	a := c.Assessment
-	title := fmt.Sprintf("🔎 Кейс #%d · риск %d/100 · trust %d/100\nЧат: %d · сообщение: %d\n", c.ID, a.Score, a.Trust, c.Message.ChatID, c.Message.ID)
-	if c.Message.UserID != nil {
-		title += fmt.Sprintf("Автор ID: %d\n", *c.Message.UserID)
+	state := "На проверку"
+	if c.Status == "closed" {
+		state = "Закрыт"
+	} else if c.Conflict {
+		state = "Конфликт меток · /resolve"
+	} else if c.Label != "" {
+		state = labelName(c.Label)
+	}
+	text := heading(iconSearch, "🔎", fmt.Sprintf("Кейс #%d · %s", c.ID, esc(state)))
+	text += fmt.Sprintf("\nРиск %d/100 · доверие %d/100", c.Assessment.Score, c.Assessment.Trust)
+	if c.Message.UserID != nil && *c.Message.UserID > 0 {
+		text += fmt.Sprintf(` · <a href="tg://user?id=%d">Автор</a>`, *c.Message.UserID)
 	} else {
-		title += "Автор: sender_chat/неизвестен\n"
+		text += " · автор неизвестен или от имени чата"
 	}
-	if a.Band != "" {
-		title += "Уровень рассмотрения: " + esc(a.Band) + "\n"
+	text += "\n\n"
+	content := c.Message.Content()
+	if content == "" {
+		content = "Текст сообщения недоступен"
 	}
+	text += "<blockquote>" + esc(privacy.Limit(content, 240)) + "</blockquote>\n"
 	if c.Message.Partial {
-		title += "Evidence partial: исходное сообщение вне журнала, использованы доступные поля reply.\n"
+		text += "<i>Исходное сообщение вне журнала; доступен только фрагмент ответа.</i>\n"
 	}
-	title += "История: только наблюдаемая, partial. Удаление: unknown.\n\n<blockquote>" + esc(privacy.Limit(c.Message.Content(), 650)) + "</blockquote>\n\n"
-	for i, s := range a.Signals {
-		if i >= 8 {
-			break
-		}
-		must := ""
-		if s.MandatoryAI {
-			must = "; AI обязателен"
-		}
-		title += fmt.Sprintf("• %s (+%d%s)\n", esc(s.Code), s.Weight, must)
-	}
+
 	if c.AI == nil {
-		if a.ReviewRequired || c.AIState == "pending" {
-			title += "AI pending — проверка не завершена.\n"
+		if c.Assessment.ReviewRequired || c.AIState == "pending" {
+			text += "\n<b>AI: ожидает проверки</b>\n"
 		} else {
-			title += "AI не запрашивался.\n"
+			text += "\nAI не запрашивался.\n"
 		}
-		title += "Рекомендация: проверить, не обвинение.\n"
 	} else {
-		title += "AI (мнение, не факт): " + esc(c.AI.Result.Category) + "\n" + esc(privacy.Limit(c.AI.Result.ExplanationRU, 550)) + "\nРекомендация AI: " + esc(c.AI.Result.Recommendation) + " (только решение администратора).\n"
+		text += "\n<b>AI: " + esc(categoryName(c.AI.Result.Category)) + "</b>\n"
+		if explanation := strings.TrimSpace(c.AI.Result.ExplanationRU); explanation != "" {
+			text += esc(privacy.Limit(explanation, 220)) + "\n"
+		}
+		text += "Совет AI: " + esc(recommendationName(c.AI.Result.Recommendation)) + ".\n"
+	}
+	if len(c.Assessment.Signals) > 0 {
+		reasons := []string{}
+		seen := map[string]bool{}
+		for _, s := range c.Assessment.Signals {
+			name := signalName(s.Code)
+			if !seen[name] && len(reasons) < 3 {
+				reasons = append(reasons, name)
+				seen[name] = true
+			}
+		}
+		text += "Причины: " + strings.Join(reasons, "; ") + ".\n"
 	}
 	if c.Reports > 0 {
-		title += fmt.Sprintf("Жалоб: %d (не доказательство нарушения).\n", c.Reports)
-	}
-	if len(c.Reporters) > 0 {
-		title += fmt.Sprintf("Авторы жалоб (только админам): %v\n", c.Reporters)
-	}
-	if c.Label != "" {
-		title += "Метка: " + esc(c.Label) + " — не факт наказания.\n"
-	}
-	if c.Status != "" {
-		title += "Состояние: " + esc(c.Status) + "\n"
-	}
-	for _, e := range c.Events {
-		relation := "Действие над пользователем; связь с сообщением не установлена."
-		if e.RelatedMessageID != nil {
-			relation = "Связь с сообщением указана администратором, не Telegram."
+		text += fmt.Sprintf("Жалоб: %d", c.Reports)
+		for i, reporter := range c.Reporters {
+			if i >= 20 {
+				break
+			}
+			text += fmt.Sprintf(` · <a href="tg://user?id=%d">%d</a>`, reporter, i+1)
 		}
-		if e.EvidenceLevel == "attested" {
-			relation = "Со слов администратора; Telegram не подтвердил. " + relation
+		text += ".\n"
+	}
+	for _, event := range c.Events {
+		source := event.Source
+		switch event.Source {
+		case "platform_chat_member":
+			source = "Telegram"
+		case "trusted_bot_webhook":
+			source = "Доверенная интеграция"
+		case "mtproto_admin_log":
+			source = "Журнал Telegram"
 		}
-		title += fmt.Sprintf("Событие: %s · %s · %s. %s\n", esc(e.Action), esc(e.Source), esc(e.EvidenceLevel), relation)
-		if e.SendingRestricted {
-			title += "Подтверждено ограничение отправки сообщений.\n"
+		if event.EvidenceLevel == "attested" {
+			text += "Со слов администратора: " + esc(actionName(event.Action)) + ". Telegram не подтвердил.\n"
+		} else if event.EvidenceLevel == "verified" {
+			text += esc(source) + ": подтверждено действие «" + esc(actionName(event.Action)) + "».\n"
+		} else {
+			text += "Неподтверждённое действие: " + esc(actionName(event.Action)) + ".\n"
+		}
+		if event.RelatedMessageID == nil {
+			text += "Связь с сообщением не установлена.\n"
+		} else {
+			text += "Связь указана администратором, не Telegram.\n"
+		}
+		if event.SendingRestricted && event.EvidenceLevel == "verified" {
+			text += "Ограничена отправка сообщений.\n"
 		}
 	}
-	title += "Бот не применяет санкций."
 	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
 	if link, err := telegram.MessageLink(c.Message.ChatID, c.Message.ID, c.Message.ThreadID); err == nil {
-		kb.InlineKeyboard = append(kb.InlineKeyboard, []models.InlineKeyboardButton{{Text: "Открыть сообщение", URL: link}})
+		kb.InlineKeyboard = append(kb.InlineKeyboard, []models.InlineKeyboardButton{{Text: "К сообщению", URL: link, IconCustomEmojiID: iconLink}})
 	} else {
-		title += "\nСсылка недоступна; используйте chat/message IDs."
+		text += fmt.Sprintf("Ссылка недоступна. Чат: <code>%d</code>, сообщение: <code>%d</code>.\n", c.Message.ChatID, c.Message.ID)
 	}
-	row := []models.InlineKeyboardButton{}
-	for _, pair := range [][2]string{{"Не нарушение", "benign"}, {"Спам", "spam"}, {"Проверить", "needs_review"}, {"Закрыть", "close"}} {
-		row = append(row, models.InlineKeyboardButton{Text: pair[0], CallbackData: fmt.Sprintf("act:%s:%d", pair[1], c.ID)})
+	if c.Status != "closed" {
+		kb.InlineKeyboard = append(kb.InlineKeyboard,
+			[]models.InlineKeyboardButton{
+				button("Не нарушение", fmt.Sprintf("act:benign:%d", c.ID), iconCheck, "success"),
+				button("Спам", fmt.Sprintf("act:spam:%d", c.ID), iconClose, "danger"),
+			},
+			[]models.InlineKeyboardButton{
+				button("Проверить", fmt.Sprintf("act:needs_review:%d", c.ID), iconSearch, "primary"),
+				button("Закрыть", fmt.Sprintf("act:close:%d", c.ID), "", ""),
+			},
+		)
 	}
-	kb.InlineKeyboard = append(kb.InlineKeyboard, row)
-	return strings.TrimSpace(title), kb
+	return strings.TrimSpace(text), kb
+}
+
+func categoryName(code string) string {
+	names := map[string]string{
+		"legitimate": "без признаков нарушения", "benign_criticism": "добросовестная критика",
+		"uncertain": "недостаточно данных", "unsolicited_promotion": "возможная реклама",
+		"referral_spam": "возможная реферальная реклама", "impersonation": "возможная подмена личности",
+		"phishing": "возможный фишинг", "credential_theft": "возможный сбор ключей или паролей", "other_abuse": "возможное нарушение",
+	}
+	if name, ok := names[code]; ok {
+		return name
+	}
+	return "нужна проверка"
+}
+
+func recommendationName(code string) string {
+	names := map[string]string{"ignore": "не вмешиваться", "monitor": "наблюдать", "review": "проверить", "warn": "рассмотреть предупреждение", "mute": "рассмотреть ограничение", "ban": "рассмотреть блокировку"}
+	if name, ok := names[code]; ok {
+		return name
+	}
+	return "проверить"
+}
+
+func labelName(code string) string {
+	names := map[string]string{"benign": "Не нарушение", "spam": "Метка: спам", "false_positive": "Ложное срабатывание", "needs_review": "На проверку"}
+	if name, ok := names[code]; ok {
+		return name
+	}
+	return "На проверку"
+}
+
+func actionName(code string) string {
+	names := map[string]string{"ban": "блокировка", "kick": "исключение", "restrict": "ограничение", "unrestrict": "снятие ограничений", "warn": "предупреждение", "delete": "удаление"}
+	if name, ok := names[code]; ok {
+		return name
+	}
+	return "неизвестно"
+}
+
+func signalName(code string) string {
+	names := map[string]string{
+		"FIRST_OBSERVED": "первое наблюдаемое сообщение", "UNKNOWN_EXTERNAL_DOMAIN": "неизвестный домен",
+		"TELEGRAM_BOT_LINK": "ссылка на бота", "TELEGRAM_LINK_UNVERIFIED": "назначение Telegram-ссылки неизвестно",
+		"COMPETITOR_PRICE_OR_ACCUSATION": "критика или сравнение цен", "REFERRAL_LINK": "реферальная ссылка",
+		"EXTERNAL_PURCHASE_CTA": "предложение покупки", "REFERRAL_REVIEW": "проверка ref-признаков",
+	}
+	if name, ok := names[code]; ok {
+		return name
+	}
+	return "дополнительные признаки"
 }
 
 type Delivery struct {

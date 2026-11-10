@@ -30,11 +30,11 @@ func (e *Engine) Prepare(ctx context.Context, u domain.Update) (domain.Update, e
 		} else {
 			m.ContentHash = ""
 			m.ContentHash = fingerprint(*m)
-			m.URLs = e.Scanner.Scan(*m)
+			*m = e.Scanner.Extract(*m)
 			if m.Reply != nil {
 				m.Reply.ContentHash = ""
 				m.Reply.ContentHash = fingerprint(*m.Reply)
-				m.Reply.URLs = e.Scanner.Scan(*m.Reply)
+				*m.Reply = e.Scanner.Extract(*m.Reply)
 			}
 			safe := privacy.Message(*m)
 			u.Message = &safe
@@ -192,7 +192,10 @@ func Run(ctx context.Context, c *config.Config) error {
 	if !private {
 		return fmt.Errorf("admin destination must be private, not a public group/channel")
 	}
-	e := NewEngine(s, c, sender, strconv.FormatInt(id, 10), username)
+	e, err := NewEngine(s, c, sender, strconv.FormatInt(id, 10), username)
+	if err != nil {
+		return err
+	}
 	if err = e.RegisterRules(ctx); err != nil {
 		return err
 	}
