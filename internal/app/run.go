@@ -25,7 +25,16 @@ func (e *Engine) Prepare(ctx context.Context, u domain.Update) (domain.Update, e
 		if err != nil {
 			return domain.Update{}, err
 		}
-		if !active && (!e.isAdminDestination(m.ChatID) || e.controlName(m.Content()) == "") {
+		ignored := false
+		if active {
+			if alias, _ := e.reportCommand(m.Content()); alias == "" {
+				ignored, err = e.ignoreAdminMessage(ctx, *m)
+				if err != nil {
+					return domain.Update{}, err
+				}
+			}
+		}
+		if ignored || !active && (!e.isAdminDestination(m.ChatID) || e.controlName(m.Content()) == "") {
 			u.Message = nil
 		} else {
 			m.ContentHash = ""
@@ -100,7 +109,7 @@ func (e *Engine) Poll(ctx context.Context, p *telegram.Poller) error {
 			}
 			safe, prepareErr := e.Prepare(ctx, u)
 			if prepareErr != nil {
-				slog.Error("chat consent lookup failed; no acknowledgement advanced")
+				slog.Error("message preparation failed; no acknowledgement advanced")
 				if !wait(ctx, 5*time.Second) {
 					return ctx.Err()
 				}

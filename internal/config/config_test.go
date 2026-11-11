@@ -85,6 +85,31 @@ func TestAutoDiscoveryAllowsEmptyChatIDsOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestIgnoreAdminMessagesConfig(t *testing.T) {
+	testEnv(t)
+	for _, tc := range []struct {
+		name, suffix string
+		want         bool
+	}{
+		{"omitted", "", false},
+		{"enabled", "moderation:\n  ignore_admin_messages: true\n", true},
+		{"disabled", "moderation:\n  ignore_admin_messages: false\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := loadTest(t, validYAML+tc.suffix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Moderation.IgnoreAdminMessages != tc.want {
+				t.Fatalf("ignore_admin_messages = %v, want %v", c.Moderation.IgnoreAdminMessages, tc.want)
+			}
+		})
+	}
+	if _, err := loadTest(t, validYAML+"moderation:\n  ignore_admin_messages: [true]\n"); err == nil {
+		t.Fatal("accepted invalid ignore flag type")
+	}
+}
+
 func TestMissingSecrets(t *testing.T) {
 	testEnv(t)
 	t.Setenv("DATABASE_URL", "")

@@ -323,9 +323,9 @@ func (p providerFake) Review(_ context.Context, r domain.ReviewRequest) (domain.
 }
 
 type notifierFake struct {
-	sends, edits int
-	fail         bool
-	public       bool
+	sends, edits, bannerSends, captionEdits int
+	fail                                    bool
+	public                                  bool
 }
 
 func (n *notifierFake) PrivateDestination(context.Context, int64) (bool, error) {
@@ -342,6 +342,14 @@ func (n *notifierFake) Send(context.Context, int64, string, *models.InlineKeyboa
 func (n *notifierFake) Edit(context.Context, int64, int64, string, *models.InlineKeyboardMarkup) error {
 	n.edits++
 	return nil
+}
+func (n *notifierFake) SendBanner(ctx context.Context, chat int64, text string, kb *models.InlineKeyboardMarkup) (int64, error) {
+	n.bannerSends++
+	return n.Send(ctx, chat, text, kb)
+}
+func (n *notifierFake) EditCaption(ctx context.Context, chat, message int64, text string, kb *models.InlineKeyboardMarkup) error {
+	n.captionEdits++
+	return n.Edit(ctx, chat, message, text, kb)
 }
 func (n *notifierFake) AnswerCallback(context.Context, string, string) error { return nil }
 func TestFullFlowRetriesOutboxAndPrivacy(t *testing.T) {

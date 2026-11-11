@@ -32,7 +32,7 @@ func RenderModels(id int64, p ModelPanel, current string) (string, *models.Inlin
 		text += "\n" + esc(p.Notice) + "\n"
 	}
 	if p.Selected >= 0 && p.Selected < len(p.Models) {
-		text += "\nВыбрана: <code>" + esc(p.Models[p.Selected]) + "</code>\n\nПрименить к новым попыткам и повторам? Выполняющиеся запросы останутся на прежней модели.\n\n<i>Совместимость не проверена. Смена не гарантирует бесплатность; тариф другой модели неизвестен.</i>"
+		text += "\nВыбрана: <code>" + esc(p.Models[p.Selected]) + "</code>\n\nПрименить модель?"
 		kb.InlineKeyboard = [][]models.InlineKeyboardButton{
 			{button("Применить модель", callback("a", p.Selected), iconCheck, "success")},
 			{button("К списку", callback("p", p.Page), iconBack, "")},
@@ -70,6 +70,6 @@ func RenderModels(id int64, p ModelPanel, current string) (string, *models.Inlin
 		row = append(row, button("Далее", callback("p", page+1), iconNext, ""))
 	}
 	kb.InlineKeyboard = append(kb.InlineKeyboard, row)
-	text += "\nВыберите модель, затем подтвердите.\nПоиск: /model название\n<i>Нужна поддержка Chat Completions и JSON. При ошибке проверка остаётся в очереди. Панель действует 30 минут.</i>"
+	text += "\nПоиск: /model название"
 	return strings.TrimSpace(text), kb
 }

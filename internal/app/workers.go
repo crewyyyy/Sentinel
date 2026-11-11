@@ -81,6 +81,8 @@ type Notifier interface {
 	PrivateDestination(context.Context, int64) (bool, error)
 	Send(context.Context, int64, string, *models.InlineKeyboardMarkup) (int64, error)
 	Edit(context.Context, int64, int64, string, *models.InlineKeyboardMarkup) error
+	SendBanner(context.Context, int64, string, *models.InlineKeyboardMarkup) (int64, error)
+	EditCaption(context.Context, int64, int64, string, *models.InlineKeyboardMarkup) error
 	AnswerCallback(context.Context, string, string) error
 }
 
@@ -91,11 +93,11 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	}
 	defer tx.Rollback(ctx)
 	var id int64
-	var raw []byte
+	var raw, previousResult []byte
 	var kind string
 	var token int
 	var changed time.Time
-	err = tx.QueryRow(ctx, `SELECT id,payload,kind,attempts+1,updated_at FROM outbox WHERE (status='pending' AND available_at<=now()) OR (status='processing' AND lease_until<now()) ORDER BY available_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id, &raw, &kind, &token, &changed)
+	err = tx.QueryRow(ctx, `SELECT id,payload,kind,attempts+1,updated_at,COALESCE(result,'{}'::jsonb) FROM outbox WHERE (status='pending' AND available_at<=now()) OR (status='processing' AND lease_until<now()) ORDER BY available_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id, &raw, &kind, &token, &changed, &previousResult)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -119,7 +121,7 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	if err = json.Unmarshal(raw, &d); err != nil {
 		return true, err
 	}
-	if d.Private && d.IncidentID == 0 && d.ModelPanelID == 0 && kind != "callback" {
+	if d.Private && d.IncidentID == 0 && d.ModelPanelID == 0 && d.ModulePanelID == 0 && d.HomePanelID == 0 && kind != "callback" {
 		private, checkErr := n.PrivateDestination(ctx, d.ChatID)
 		if checkErr != nil {
 			return retryBeforeSend("destination_unavailable", max(10*time.Second, telegram.RetryDelay(checkErr)))
@@ -146,6 +148,7 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	text := d.Text
 	var kb *models.InlineKeyboardMarkup
 	var msgID int64
+	banner := false
 	if d.ConnectionID > 0 {
 		var owner, chat, revision int64
 		var title, status string
@@ -211,6 +214,68 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 		}
 		text, kb = notify.RenderModels(d.ModelPanelID, state, setting.Model)
 	}
+	if d.HomePanelID > 0 {
+		p, readErr := readControlPanel(ctx, e.Store.Pool, d.HomePanelID, false)
+		if readErr != nil && !errors.Is(readErr, pgx.ErrNoRows) {
+			return retryBeforeSend("panel_data_unavailable", 10*time.Second)
+		}
+		if readErr != nil || p.Chat != d.ChatID || !e.controlPanelAllowed(p) {
+			_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='done',lease_until=NULL,last_error='control_panel_unavailable',result='{"delivery":"unavailable"}' WHERE id=$1 AND lease_token=$2`, id, token)
+			return true, err
+		}
+		private, checkErr := n.PrivateDestination(ctx, p.Chat)
+		if checkErr != nil {
+			return retryBeforeSend("destination_unavailable", max(10*time.Second, telegram.RetryDelay(checkErr)))
+		}
+		if !private {
+			return retryBeforeSend("destination_not_private", time.Hour)
+		}
+		data, dataErr := e.homeData(ctx, p.Owner, p.View)
+		if dataErr != nil {
+			return retryBeforeSend("panel_data_unavailable", 10*time.Second)
+		}
+		text, kb = notify.RenderHome(p.HomePanel, data)
+		msgID = p.Receipt
+		// The durable receipt remembers media type across retries and restarts.
+		// Legacy text panels keep their existing message until the next /start.
+		var receipt struct {
+			Banner bool `json:"banner"`
+		}
+		if err = json.Unmarshal(previousResult, &receipt); err != nil {
+			return retryBeforeSend("panel_data_unavailable", 10*time.Second)
+		}
+		banner = msgID == 0 || receipt.Banner
+	}
+	if d.ModulePanelID > 0 {
+		r, readErr := readModulePanel(ctx, e.Store.Pool, d.ModulePanelID, false)
+		if readErr != nil && !errors.Is(readErr, pgx.ErrNoRows) {
+			return true, readErr
+		}
+		allowed := readErr == nil && r.Destination == d.ChatID
+		if allowed {
+			allowed, err = e.modulePanelAllowed(ctx, r)
+			if err != nil {
+				return retryBeforeSend("authorization_unavailable", max(10*time.Second, telegram.RetryDelay(err)))
+			}
+		}
+		if !allowed {
+			_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='done',lease_until=NULL,last_error='module_panel_unavailable',result='{"delivery":"unavailable"}' WHERE id=$1 AND lease_token=$2`, id, token)
+			return true, err
+		}
+		private, checkErr := n.PrivateDestination(ctx, d.ChatID)
+		if checkErr != nil {
+			return retryBeforeSend("destination_unavailable", max(10*time.Second, telegram.RetryDelay(checkErr)))
+		}
+		if !private {
+			return retryBeforeSend("destination_not_private", time.Hour)
+		}
+		analyzer, buildErr := e.compileModulePolicy(r.State.Origin, storage.ModuleSetting{Version: r.State.SettingVersion, Overrides: r.State.Draft})
+		if buildErr != nil {
+			return true, buildErr
+		}
+		text, kb = notify.RenderModules(d.ModulePanelID, r.State, analyzer.Resolved())
+		msgID = r.Receipt
+	}
 	if d.IncidentID > 0 {
 		var card []byte
 		if err = e.Store.Pool.QueryRow(ctx, `SELECT payload FROM incidents WHERE id=$1`, d.IncidentID).Scan(&card); err != nil {
@@ -248,14 +313,23 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	if kind == "callback" {
 		err = n.AnswerCallback(requestCtx, d.CallbackID, text)
 	} else if msgID > 0 {
-		err = n.Edit(requestCtx, d.ChatID, msgID, text, kb)
+		if banner {
+			err = n.EditCaption(requestCtx, d.ChatID, msgID, text, kb)
+		} else {
+			err = n.Edit(requestCtx, d.ChatID, msgID, text, kb)
+		}
 		if err != nil && errors.Is(err, bot.ErrorBadRequest) {
 			if strings.Contains(err.Error(), "message is not modified") {
 				err = nil
+			} else if d.HomePanelID > 0 {
+				banner = true
+				msgID, err = n.SendBanner(requestCtx, d.ChatID, text, kb)
 			} else {
 				msgID, err = n.Send(requestCtx, d.ChatID, "Обновление статуса (предыдущая карточка недоступна):\n"+text, kb)
 			}
 		}
+	} else if banner {
+		msgID, err = n.SendBanner(requestCtx, d.ChatID, text, kb)
 	} else {
 		msgID, err = n.Send(requestCtx, d.ChatID, text, kb)
 	}
@@ -279,7 +353,8 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	defer finish.Rollback(ctx)
 	tag, err := finish.Exec(ctx, `UPDATE outbox SET status=CASE WHEN updated_at>$3 THEN 'pending' ELSE 'done' END,lease_until=NULL,result=$4 WHERE id=$1 AND lease_token=$2 AND status='processing'`, id, token, changed, struct {
 		MessageID int64 `json:"message_id"`
-	}{msgID})
+		Banner    bool  `json:"banner,omitempty"`
+	}{msgID, banner})
 	if err != nil {
 		return true, err
 	}
@@ -288,6 +363,16 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 	}
 	if d.ConnectionID > 0 {
 		if _, err = finish.Exec(ctx, `UPDATE chat_connection_requests SET telegram_message_id=$2 WHERE id=$1`, d.ConnectionID, msgID); err != nil {
+			return true, err
+		}
+	}
+	if d.HomePanelID > 0 {
+		if _, err = finish.Exec(ctx, `UPDATE control_panels SET telegram_message_id=$2 WHERE id=$1`, d.HomePanelID, msgID); err != nil {
+			return true, err
+		}
+	}
+	if d.ModulePanelID > 0 {
+		if _, err = finish.Exec(ctx, `UPDATE module_panels SET telegram_message_id=$2 WHERE id=$1`, d.ModulePanelID, msgID); err != nil {
 			return true, err
 		}
 	}
@@ -320,6 +405,11 @@ func (e *Engine) Cleanup(ctx context.Context) error {
 		{`DELETE FROM outbox WHERE kind='model_panel' AND (payload->>'model_panel_id')::bigint IN(SELECT id FROM model_panels WHERE expires_at<now()) AND status<>'processing'`, nil},
 		{`DELETE FROM model_panels WHERE expires_at<now() AND NOT EXISTS(SELECT 1 FROM outbox WHERE kind='model_panel' AND (payload->>'model_panel_id')::bigint=model_panels.id AND status='processing')`, nil},
 		{`DELETE FROM model_change_events WHERE created_at<now()-interval '90 days'`, nil},
+		{`DELETE FROM outbox WHERE kind='control_panel' AND (payload->>'home_panel_id')::bigint IN(SELECT id FROM control_panels WHERE expires_at<now()) AND status<>'processing'`, nil},
+		{`DELETE FROM control_panels WHERE expires_at<now() AND NOT EXISTS(SELECT 1 FROM outbox WHERE kind='control_panel' AND (payload->>'home_panel_id')::bigint=control_panels.id AND status='processing')`, nil},
+		{`DELETE FROM outbox WHERE kind='module_panel' AND (payload->>'module_panel_id')::bigint IN(SELECT id FROM module_panels WHERE expires_at<now()) AND status<>'processing'`, nil},
+		{`DELETE FROM module_panels WHERE expires_at<now() AND NOT EXISTS(SELECT 1 FROM outbox WHERE kind='module_panel' AND (payload->>'module_panel_id')::bigint=module_panels.id AND status='processing')`, nil},
+		{`DELETE FROM module_change_events WHERE created_at<now()-interval '90 days'`, nil},
 		{`DELETE FROM outbox WHERE kind='chat_connection' AND (payload->>'connection_id')::bigint IN(SELECT id FROM chat_connection_requests WHERE expires_at<now()) AND status<>'processing'`, nil},
 		{`DELETE FROM chat_connection_requests WHERE expires_at<now() AND NOT EXISTS(SELECT 1 FROM outbox WHERE kind='chat_connection' AND (payload->>'connection_id')::bigint=chat_connection_requests.id AND status='processing')`, nil},
 		{`DELETE FROM chat_connection_events WHERE created_at<now()-interval '90 days'`, nil},

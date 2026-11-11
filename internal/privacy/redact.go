@@ -34,6 +34,7 @@ func Message(m domain.Message) domain.Message {
 	m.Caption = Limit(Redact(m.Caption), 8192)
 	m.QuoteText = Limit(Redact(m.QuoteText), 2048)
 	if m.Text != original.Text || m.Caption != original.Caption || m.QuoteText != original.QuoteText {
+		m.FeaturesPartial = true
 		// Detached facts lose credential context (e.g. password=@name). Do not
 		// recover them with offsets into redacted text; preserve coverage as unknown.
 		if len(m.URLs) > 0 {

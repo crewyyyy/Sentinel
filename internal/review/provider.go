@@ -206,7 +206,7 @@ func (p *Compatible) Review(ctx context.Context, r domain.ReviewRequest) (domain
 	if len(evidence) > 128<<10 {
 		return domain.ReviewResponse{}, fmt.Errorf("review evidence too large")
 	}
-	payload, err := json.Marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "system", "content": prompts.ReviewV2}, {"role": "user", "content": string(evidence)}}, "response_format": map[string]string{"type": "json_object"}, "max_tokens": 700, "temperature": 0})
+	payload, err := json.Marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "system", "content": prompts.ReviewV3}, {"role": "user", "content": string(evidence)}}, "response_format": map[string]string{"type": "json_object"}, "max_tokens": 700, "temperature": 0})
 	if err != nil {
 		return domain.ReviewResponse{}, err
 	}

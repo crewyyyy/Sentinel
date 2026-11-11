@@ -23,6 +23,18 @@ var onboardingUp string
 //go:embed 0003_chat_onboarding.down.sql
 var onboardingDown string
 
+//go:embed 0004_module_settings.up.sql
+var moduleSettingsUp string
+
+//go:embed 0004_module_settings.down.sql
+var moduleSettingsDown string
+
+//go:embed 0005_control_panels.up.sql
+var controlPanelsUp string
+
+//go:embed 0005_control_panels.down.sql
+var controlPanelsDown string
+
 type Migration struct {
 	Version string
 	SQL     string
@@ -30,8 +42,8 @@ type Migration struct {
 
 // Ordered returns fresh values so callers cannot modify the embedded migration list.
 func Ordered() []Migration {
-	return []Migration{{"0001_init", Up}, {"0002_runtime_models", runtimeModelsUp}, {"0003_chat_onboarding", onboardingUp}}
+	return []Migration{{"0001_init", Up}, {"0002_runtime_models", runtimeModelsUp}, {"0003_chat_onboarding", onboardingUp}, {"0004_module_settings", moduleSettingsUp}, {"0005_control_panels", controlPanelsUp}}
 }
 
 // Down reverses all embedded migrations, only for disposable databases/explicit destructive rollback.
-var Down = onboardingDown + "\n" + runtimeModelsDown + "\n" + initialDown
+var Down = controlPanelsDown + "\n" + moduleSettingsDown + "\n" + onboardingDown + "\n" + runtimeModelsDown + "\n" + initialDown

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,8 @@ type Engine struct {
 	Scanner         *urlscan.Scanner
 	Rules           rules.Config
 	Analyzer        *rules.Analyzer
+	analysisMu      sync.Mutex
+	analysisCache   map[string]*rules.Analyzer
 	BotID, Username string
 }
 
@@ -47,26 +50,24 @@ func NewEngine(s *storage.Store, c *config.Config, admins AdminChecker, botID, u
 	return &Engine{Store: s, Config: c, Admins: admins, Scanner: urlscan.New(c.Links.AllowDomains, c.Links.WatchDomains, c.Links.DenyDomains, c.Links.KnownBots), Rules: c.RuleConfig(), Analyzer: analyzer, BotID: botID, Username: username}, nil
 }
 func (e *Engine) RegisterRules(ctx context.Context) error {
-	snapshot := struct {
-		Rules    rules.Config
-		Links    config.Links
-		Trust    config.Trust
-		Analysis any
-	}{e.Rules, e.Config.Links, e.Config.Trust, e.Analyzer.Snapshot()}
+	compiled, err := json.Marshal(e.Analyzer.Resolved().Config)
+	if err != nil {
+		return fmt.Errorf("encode compiled rules: %w", err)
+	}
+	configured, err := json.Marshal(e.Rules)
+	if err != nil {
+		return fmt.Errorf("encode configured rules: %w", err)
+	}
+	if string(compiled) != string(configured) {
+		return fmt.Errorf("engine rules changed after compilation; rebuild with a new version")
+	}
 	tx, err := e.Store.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO ruleset_versions(version,rules,model,prompt_version,source) VALUES($1,$2,$3,$4,'operator_configuration') ON CONFLICT DO NOTHING`, e.Rules.Version, snapshot, e.Config.AI.Model, prompts.CurrentVersion); err != nil {
+	if err = e.registerAnalyzer(ctx, tx, e.Analyzer, "operator_configuration"); err != nil {
 		return err
-	}
-	var same bool
-	if err = tx.QueryRow(ctx, `SELECT rules=$2::jsonb FROM ruleset_versions WHERE version=$1`, e.Rules.Version, snapshot).Scan(&same); err != nil {
-		return err
-	}
-	if !same {
-		return fmt.Errorf("ruleset_version already exists with different rules; use a new version")
 	}
 	return tx.Commit(ctx)
 }
@@ -140,6 +141,20 @@ func (e *Engine) process(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if _, err := tx.Exec(ctx, `INSERT INTO chats(chat_id,chat_type,username) VALUES($1,$2,$3) ON CONFLICT(chat_id) DO UPDATE SET username=EXCLUDED.username,updated_at=now()`, m.ChatID, m.ChatType, m.ChatUsername); err != nil {
 			return err
 		}
+		ignored, err := e.ignoreAdminMessage(ctx, *m)
+		if err != nil {
+			return err
+		}
+		if ignored {
+			if alias, reason := e.reportCommand(m.Content()); alias != "" && m.UserID != nil {
+				// A report is an explicit request, not automatic analysis of its author.
+				if _, err := tx.Exec(ctx, `INSERT INTO users(user_id,username) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,updated_at=now()`, *m.UserID, m.Username); err != nil {
+					return err
+				}
+				return e.report(ctx, tx, *m, reason)
+			}
+			return nil
+		}
 		saved, a, changed, err := e.message(ctx, tx, *m, false)
 		if err != nil {
 			return err
@@ -147,7 +162,7 @@ func (e *Engine) process(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if alias, reason := e.reportCommand(saved.Content()); alias != "" {
 			return e.report(ctx, tx, saved, reason)
 		}
-		if changed && a.Score >= e.Config.Moderation.AlertThreshold {
+		if changed && (a.Score >= e.Config.Moderation.AlertThreshold || a.ProhibitedPolicyMatch()) {
 			_, err = e.incident(ctx, tx, saved, a, nil, false)
 			return err
 		}
@@ -302,7 +317,11 @@ func (e *Engine) message(ctx context.Context, tx pgx.Tx, m domain.Message, repor
 			return m, domain.Assessment{}, false, err
 		}
 	}
-	a := e.Analyzer.Assess(m, m.URLs, first, trustScore)
+	analyzer, err := e.chatAnalyzer(ctx, tx, m.ChatID)
+	if err != nil {
+		return m, domain.Assessment{}, false, err
+	}
+	a := analyzer.Assess(m, m.URLs, first, trustScore)
 	if _, err = tx.Exec(ctx, `INSERT INTO message_keys(chat_id,message_id,edit_version,user_id,fingerprint,last_edited_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(chat_id,message_id) DO UPDATE SET edit_version=EXCLUDED.edit_version,fingerprint=EXCLUDED.fingerprint,last_edited_at=EXCLUDED.last_edited_at`, m.ChatID, m.ID, m.Version, m.UserID, fingerprint(m), m.EditedAt); err != nil {
 		return m, a, false, err
 	}

@@ -174,10 +174,17 @@ func actionName(code string) string {
 
 func signalName(code string) string {
 	names := map[string]string{
+		"ANALYSIS_MODULE_ERROR": "неполный анализ", "URL_SCAN_LIMIT": "неполный разбор ссылок",
+		"SHORTENER": "короткая ссылка", "DOMAIN_IMPERSONATION": "подмена домена",
+		"WATCH_DOMAIN": "домен под наблюдением", "DENIED_DOMAIN": "запрещённый домен",
+		"ALTERNATIVE_API_CHEAPER": "предложение API дешевле", "REPEATED_PROMO": "повторная реклама",
+		"MASS_IDENTICAL_LINKS": "повторные ссылки", "CREDENTIAL_SOLICITATION": "запрос ключа или пароля",
 		"FIRST_OBSERVED": "первое наблюдаемое сообщение", "UNKNOWN_EXTERNAL_DOMAIN": "неизвестный домен",
 		"TELEGRAM_BOT_LINK": "ссылка на бота", "TELEGRAM_LINK_UNVERIFIED": "назначение Telegram-ссылки неизвестно",
 		"COMPETITOR_PRICE_OR_ACCUSATION": "критика или сравнение цен", "REFERRAL_LINK": "реферальная ссылка",
 		"EXTERNAL_PURCHASE_CTA": "предложение покупки", "REFERRAL_REVIEW": "проверка ref-признаков",
+		"SALES_REVIEW": "признаки продажи", "DISTRIBUTION_REVIEW": "предложение распространения",
+		"SERVICES_REVIEW": "предложение услуг", "RECRUITMENT_REVIEW": "привлечение клиентов",
 	}
 	if name, ok := names[code]; ok {
 		return name
@@ -186,13 +193,15 @@ func signalName(code string) string {
 }
 
 type Delivery struct {
-	ConnectionID int64  `json:"connection_id,omitempty"`
-	ModelPanelID int64  `json:"model_panel_id,omitempty"`
-	OperatorOnly bool   `json:"operator_only,omitempty"`
-	Private      bool   `json:"private"`
-	OriginChatID int64  `json:"origin_chat_id,omitempty"`
-	IncidentID   int64  `json:"incident_id"`
-	ChatID       int64  `json:"chat_id"`
-	Text         string `json:"text,omitempty"`
-	Fallback     bool   `json:"fallback,omitempty"`
+	HomePanelID   int64  `json:"home_panel_id,omitempty"`
+	ConnectionID  int64  `json:"connection_id,omitempty"`
+	ModelPanelID  int64  `json:"model_panel_id,omitempty"`
+	ModulePanelID int64  `json:"module_panel_id,omitempty"`
+	OperatorOnly  bool   `json:"operator_only,omitempty"`
+	Private       bool   `json:"private"`
+	OriginChatID  int64  `json:"origin_chat_id,omitempty"`
+	IncidentID    int64  `json:"incident_id"`
+	ChatID        int64  `json:"chat_id"`
+	Text          string `json:"text,omitempty"`
+	Fallback      bool   `json:"fallback,omitempty"`
 }

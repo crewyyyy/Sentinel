@@ -92,15 +92,30 @@ type Signal struct {
 	MandatoryAI    bool    `json:"mandatory_ai"`
 	RulesetVersion string  `json:"ruleset_version"`
 }
+type PolicyCheck struct {
+	Module string `json:"module"`
+	Mode   string `json:"mode"` // review or prohibited by chat policy; not a finding of guilt
+}
+
 type Assessment struct {
-	Band           string   `json:"risk_band"`
-	Score          int      `json:"risk_score"`
-	Trust          int      `json:"trust_at_detection"`
-	Mandatory      bool     `json:"mandatory"`
-	ReviewRequired bool     `json:"ai_review_required"`
-	Signals        []Signal `json:"signals"`
-	URLs           []URL    `json:"normalized_urls"`
-	Version        string   `json:"ruleset_version"`
+	PolicyChecks   []PolicyCheck `json:"policy_checks,omitempty"`
+	Band           string        `json:"risk_band"`
+	Score          int           `json:"risk_score"`
+	Trust          int           `json:"trust_at_detection"`
+	Mandatory      bool          `json:"mandatory"`
+	ReviewRequired bool          `json:"ai_review_required"`
+	Signals        []Signal      `json:"signals"`
+	URLs           []URL         `json:"normalized_urls"`
+	Version        string        `json:"ruleset_version"`
+}
+
+func (a Assessment) ProhibitedPolicyMatch() bool {
+	for _, check := range a.PolicyChecks {
+		if check.Mode == "prohibited" {
+			return true
+		}
+	}
+	return false
 }
 
 type ReviewRequest struct {

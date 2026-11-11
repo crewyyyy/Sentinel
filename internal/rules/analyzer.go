@@ -33,11 +33,12 @@ type Finding struct {
 }
 
 type input struct {
-	message domain.Message
-	urls    []domain.URL
-	first   bool
-	text    match.Prepared
-	parts   []match.Prepared
+	message  domain.Message
+	urls     []domain.URL
+	first    bool
+	text     match.Prepared
+	parts    []match.Prepared
+	contexts []match.Context
 }
 
 func (in input) matches(matcher *match.Matcher) bool {
@@ -62,10 +63,11 @@ type buildContext struct{ modules map[string]moduleSettings }
 // Analyzer is compiled once at startup and is safe for concurrent assessments.
 // It owns copies of every caller-supplied setting and never mutates inputs.
 type Analyzer struct {
-	config  Config
-	options Options
-	stages  []stage
-	signals map[string]SignalSpec
+	config     Config
+	options    Options
+	stages     []stage
+	signals    map[string]SignalSpec
+	contextual bool
 }
 
 type ResolvedSnapshot struct {
@@ -96,6 +98,9 @@ func NewAnalyzer(c Config, options Options) (*Analyzer, error) {
 			a.signals[signal.Code] = signal
 		}
 		if *resolved.Modules[spec.ID].Enabled {
+			if _, ok := spec.Thresholds["policy"]; ok {
+				a.contextual = true
+			}
 			a.stages = append(a.stages, spec.build(context)...)
 		}
 	}
@@ -251,6 +256,9 @@ func (a *Analyzer) Assess(m domain.Message, urls []domain.URL, first bool, trust
 	assessment := domain.Assessment{Trust: max(0, min(100, trust)), URLs: urls, Version: a.config.Version, Signals: []domain.Signal{}}
 	text, parts := match.PrepareParts(m.Content(), m.QuoteText)
 	in := input{message: m, urls: urls, first: first, text: text, parts: parts}
+	if a.contextual {
+		in.contexts = preparePolicyContexts(m)
+	}
 	seen := map[string]bool{}
 	familyScores := map[string]int{}
 	for _, stage := range a.stages {
@@ -297,5 +305,20 @@ func (a *Analyzer) Assess(m domain.Message, urls []domain.URL, first bool, trust
 	}
 	assessment.Band = bands[tier]
 	assessment.ReviewRequired = assessment.Mandatory || assessment.Score >= a.config.AIThreshold
+	checked := map[string]bool{}
+	for _, signal := range assessment.Signals {
+		family := a.signals[signal.Code].Family
+		module := a.options.Modules[family]
+		policy, configurable := module.Thresholds["policy"]
+		if !configurable || checked[family] || module.Enabled == nil || !*module.Enabled {
+			continue
+		}
+		checked[family] = true
+		mode := "review"
+		if policy == 1 {
+			mode = "prohibited"
+		}
+		assessment.PolicyChecks = append(assessment.PolicyChecks, domain.PolicyCheck{Module: family, Mode: mode})
+	}
 	return assessment
 }

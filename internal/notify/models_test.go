@@ -32,6 +32,9 @@ func TestModelPagesConfirmationAndCallbackBounds(t *testing.T) {
 	if !strings.Contains(text, ids[7]) || len(kb.InlineKeyboard) != 2 || !strings.Contains(kb.InlineKeyboard[0][0].CallbackData, ":a:7") {
 		t.Fatal(text, kb)
 	}
+	if strings.Contains(text, "не гарантирует") || strings.Contains(text, "Совместимость") || strings.Contains(text, "Выполняющиеся") {
+		t.Fatal("model confirmation repeats generic caveats")
+	}
 	p.Selected = -1
 	p.Query = "<script>"
 	text, _ = RenderModels(123, p, ids[0])

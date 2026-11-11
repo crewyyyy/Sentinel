@@ -48,14 +48,15 @@ type Telegram struct {
 	AllowedAdminIDs   []int64 `yaml:"allowed_admin_ids"`
 }
 type Moderation struct {
-	EnforcementEnabled bool           `yaml:"enforcement_enabled"`
-	RulesetVersion     string         `yaml:"ruleset_version"`
-	Weights            map[string]int `yaml:"weights"`
-	RiskAIThreshold    int            `yaml:"risk_ai_threshold"`
-	AlertThreshold     int            `yaml:"alert_threshold"`
-	ScoreThresholds    []int          `yaml:"score_thresholds"`
-	ReportAliases      []string       `yaml:"report_aliases"`
-	WatchMessageEdits  bool           `yaml:"watch_message_edits"`
+	EnforcementEnabled  bool           `yaml:"enforcement_enabled"`
+	RulesetVersion      string         `yaml:"ruleset_version"`
+	Weights             map[string]int `yaml:"weights"`
+	RiskAIThreshold     int            `yaml:"risk_ai_threshold"`
+	AlertThreshold      int            `yaml:"alert_threshold"`
+	ScoreThresholds     []int          `yaml:"score_thresholds"`
+	ReportAliases       []string       `yaml:"report_aliases"`
+	WatchMessageEdits   bool           `yaml:"watch_message_edits"`
+	IgnoreAdminMessages bool           `yaml:"ignore_admin_messages"`
 }
 type Trust struct {
 	MaximumRiskDiscount int `yaml:"maximum_risk_discount"`

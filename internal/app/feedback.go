@@ -54,8 +54,14 @@ func (e *Engine) audit(ctx context.Context, tx pgx.Tx, u domain.Update, id int64
 }
 func (e *Engine) callback(ctx context.Context, tx pgx.Tx, u domain.Update) error {
 	c := u.Callback
+	if strings.HasPrefix(c.Data, "nav:") {
+		return e.homeCallback(ctx, tx, u)
+	}
 	if strings.HasPrefix(c.Data, "conn:") {
 		return e.connectionCallback(ctx, tx, u)
+	}
+	if strings.HasPrefix(c.Data, "mod:") {
+		return e.moduleCallback(ctx, tx, u)
 	}
 	if strings.HasPrefix(c.Data, "mdl:") {
 		return e.modelCallback(ctx, tx, u)
@@ -270,7 +276,7 @@ func (e *Engine) report(ctx context.Context, tx pgx.Tx, m domain.Message, reason
 func (e *Engine) membership(ctx context.Context, tx pgx.Tx, u domain.Update) error {
 	m := *u.Membership
 	if m.Self {
-		_, err := tx.Exec(ctx, `INSERT INTO chats(chat_id,features) VALUES($1,$2) ON CONFLICT(chat_id) DO UPDATE SET features=EXCLUDED.features,updated_at=now()`, m.ChatID, m)
+		_, err := tx.Exec(ctx, `INSERT INTO chats(chat_id,title,features) VALUES($1,$2,$3) ON CONFLICT(chat_id) DO UPDATE SET title=COALESCE(NULLIF(EXCLUDED.title,''),chats.title),features=EXCLUDED.features,updated_at=now()`, m.ChatID, m.ChatTitle, m)
 		return err
 	}
 	ev := moderation.FromMembership(m, u.ID)
@@ -335,7 +341,7 @@ func (e *Engine) controlName(text string) string {
 		cmd = cmd[:i]
 	}
 	switch cmd {
-	case "/status", "/stats", "/case", "/feedback", "/tune", "/review", "/forget", "/attest", "/link", "/reports", "/reportcase", "/resolve", "/model", "/models", "/start", "/chats":
+	case "/status", "/stats", "/case", "/feedback", "/tune", "/review", "/forget", "/attest", "/link", "/reports", "/reportcase", "/resolve", "/model", "/models", "/modules", "/modulewords", "/modulelimit", "/start", "/chats":
 		return cmd
 	}
 	return ""
@@ -355,6 +361,12 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 	}
 	if cmd == "/start" || cmd == "/chats" {
 		return e.chatsCommand(ctx, tx, u)
+	}
+	if cmd == "/modules" {
+		return e.modulesCommand(ctx, tx, u, parts[1:])
+	}
+	if cmd == "/modulewords" || cmd == "/modulelimit" {
+		return e.moduleEditCommand(ctx, tx, u, cmd == "/modulewords", parts[1:])
 	}
 	if cmd == "/model" || cmd == "/models" {
 		return e.modelCommand(ctx, tx, u, parts[1:])
@@ -477,7 +489,7 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		}
 		return e.ackHTML(ctx, tx, *m, notify.StatusHeading()+fmt.Sprintf("\nAI: %s\nМодель: <code>%s</code>\n\nПроверки: %d в очереди · %d завершено\nЖалобы: %d · события в очереди: %d\n\n<b>Получение событий</b>%s\n\n/model · модель AI\n/tune · правила <code>%s</code>", aiState, html.EscapeString(privacy.Redact(setting.Model)), pending, done, reports, inbox, capabilities, html.EscapeString(e.Rules.Version)))
 	case "/tune":
-		return e.ack(ctx, tx, *m, "Правила — в YAML: analysis.modules, weights и пороги.\n\nСмените moderation.ruleset_version, проверьте validate и replay, затем перезапустите бота. Каталог модулей: sentinel modules.")
+		return e.ack(ctx, tx, *m, "/modules — настройки правил чата.")
 	case "/case":
 		if id == 0 {
 			return e.ack(ctx, tx, *m, "Используйте /case ID.")
@@ -507,9 +519,9 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if err = e.enqueue(ctx, tx, c.Message, c.Assessment, true); err != nil {
 			return err
 		}
-		return e.ack(ctx, tx, *m, "Актуальная ревизия поставлена на AI-проверку (повторный готовый review не дублируется).")
+		return e.ack(ctx, tx, *m, "Проверка запрошена.")
 	case "/forget":
-		return e.ack(ctx, tx, *m, "Удаление выполняет оператор командой sentinel forget --chat ID --user ID. Активные доказательства и незавершённые обязательные jobs требуют отдельного рассмотрения; см. docs/privacy.md.")
+		return e.ack(ctx, tx, *m, "Удаление истории: sentinel forget --chat ID --user ID. Инструкция: docs/privacy.md.")
 	}
 	return nil
 }

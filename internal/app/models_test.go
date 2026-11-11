@@ -9,6 +9,7 @@ import (
 
 	"sentinel/internal/domain"
 	"sentinel/internal/notify"
+	"sentinel/internal/review"
 	"sentinel/internal/storage"
 	"sentinel/migrations"
 	"sentinel/prompts"
@@ -162,6 +163,20 @@ func TestModelPanelRightsReceiptExpiryAndCatalogFailure(t *testing.T) {
 		t.Fatal("provider error body leaked")
 	}
 }
+func TestCatalogUnauthorizedNamesConfigurationWithoutChangingModel(t *testing.T) {
+	e := testEngine(t)
+	e.Catalog = catalogFake{err: &review.Error{Code: "catalog_unauthorized"}}
+	m := msg(1, 111, "/model")
+	m.ChatID = adminChat
+	deliver(t, e, domain.Update{ID: 1, Message: &m})
+	if number(t, e, `SELECT count(*) FROM outbox WHERE payload->>'text' LIKE '%401%' AND payload->>'text' LIKE '%AI_API_KEY%'`) != 1 {
+		t.Fatal("authorization failure reported as a temporary outage")
+	}
+	if number(t, e, `SELECT count(*) FROM model_panels`) != 0 || number(t, e, `SELECT count(*) FROM runtime_ai_model`) != 0 {
+		t.Fatal("catalog failure created a panel or changed model")
+	}
+}
+
 func TestConcurrentModelPanelsRejectStaleConfirmation(t *testing.T) {
 	e := testEngine(t)
 	e.Config.Telegram.AllowedAdminIDs = []int64{111, 222}
