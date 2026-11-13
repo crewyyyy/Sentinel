@@ -8,8 +8,10 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -18,24 +20,87 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 
-type Sender struct{ Bot *bot.Bot }
+type Sender struct {
+	Bot              *bot.Bot
+	emojiUnavailable atomic.Bool
+}
+
+var customEmojiTag = regexp.MustCompile(`<tg-emoji emoji-id="[0-9]+">[^<]*</tg-emoji> ?`)
+
+// Unsupported custom emoji must not block delivery. Copy buttons so retries never mutate a shared panel.
+func withoutCustomEmoji(text string, kb *models.InlineKeyboardMarkup) (string, *models.InlineKeyboardMarkup) {
+	text = customEmojiTag.ReplaceAllString(text, "")
+	if kb == nil {
+		return text, nil
+	}
+	plain := &models.InlineKeyboardMarkup{InlineKeyboard: make([][]models.InlineKeyboardButton, len(kb.InlineKeyboard))}
+	for i, row := range kb.InlineKeyboard {
+		plain.InlineKeyboard[i] = append([]models.InlineKeyboardButton{}, row...)
+		for j := range plain.InlineKeyboard[i] {
+			plain.InlineKeyboard[i][j].IconCustomEmojiID = ""
+		}
+	}
+	return text, plain
+}
+
+func emojiRejected(err error) bool {
+	if !errors.Is(err, bot.ErrorBadRequest) {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "emoji") || strings.Contains(text, "premium")
+}
 
 func NewSender(token string) (*Sender, error) {
 	b, err := bot.New(token, bot.WithSkipGetMe(), bot.WithHTTPClient(35*time.Second, &http.Client{Timeout: 40 * time.Second}))
 	if err != nil {
 		return nil, fmt.Errorf("initialize Telegram SDK")
 	}
-	return &Sender{b}, nil
+	return &Sender{Bot: b}, nil
 }
 func (s *Sender) Send(ctx context.Context, chatID int64, text string, kb *models.InlineKeyboardMarkup) (int64, error) {
-	m, err := s.Bot.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: kb, LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: boolPtr(true)}})
+	if s.emojiUnavailable.Load() {
+		text, kb = withoutCustomEmoji(text, kb)
+	}
+	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML, LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: boolPtr(true)}}
+	// A typed nil in ReplyMarkup's interface serializes as JSON null, not an omitted field.
+	if kb != nil {
+		params.ReplyMarkup = kb
+	}
+	m, err := s.Bot.SendMessage(ctx, params)
+	if emojiRejected(err) {
+		params.Text, kb = withoutCustomEmoji(text, kb)
+		params.ReplyMarkup = nil
+		if kb != nil {
+			params.ReplyMarkup = kb
+		}
+		m, err = s.Bot.SendMessage(ctx, params)
+		if err == nil {
+			s.emojiUnavailable.Store(true)
+		}
+	}
 	if err != nil {
 		return 0, err
 	}
 	return int64(m.ID), nil
 }
 func (s *Sender) Edit(ctx context.Context, chatID, msgID int64, text string, kb *models.InlineKeyboardMarkup) error {
-	_, err := s.Bot.EditMessageText(ctx, &bot.EditMessageTextParams{ChatID: chatID, MessageID: int(msgID), Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: kb, LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: boolPtr(true)}})
+	// Closed panels must remove the old buttons explicitly; null is not a keyboard object.
+	if kb == nil {
+		kb = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
+	}
+	if s.emojiUnavailable.Load() {
+		text, kb = withoutCustomEmoji(text, kb)
+	}
+	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: int(msgID), Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: kb, LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: boolPtr(true)}}
+	_, err := s.Bot.EditMessageText(ctx, params)
+	if emojiRejected(err) {
+		params.Text, params.ReplyMarkup = withoutCustomEmoji(text, kb)
+		_, err = s.Bot.EditMessageText(ctx, params)
+		if err == nil || errors.Is(err, bot.ErrorBadRequest) && strings.Contains(err.Error(), "message is not modified") {
+			s.emojiUnavailable.Store(true)
+		}
+	}
 	return err
 }
 func (s *Sender) AnswerCallback(ctx context.Context, id, text string) error {

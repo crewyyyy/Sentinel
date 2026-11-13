@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sentinel/internal/review"
 	"sentinel/internal/rules"
+	"sentinel/internal/urlscan"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ type Config struct {
 	Retention     Retention     `yaml:"retention"`
 	Links         Links         `yaml:"links"`
 	Notifications Notifications `yaml:"notifications"`
+	Analysis      rules.Options `yaml:"analysis"`
 	DatabaseURL   string        `yaml:"-"`
 	BotToken      string        `yaml:"-"`
 	AIKey         string        `yaml:"-"`
@@ -46,14 +48,15 @@ type Telegram struct {
 	AllowedAdminIDs   []int64 `yaml:"allowed_admin_ids"`
 }
 type Moderation struct {
-	EnforcementEnabled bool           `yaml:"enforcement_enabled"`
-	RulesetVersion     string         `yaml:"ruleset_version"`
-	Weights            map[string]int `yaml:"weights"`
-	RiskAIThreshold    int            `yaml:"risk_ai_threshold"`
-	AlertThreshold     int            `yaml:"alert_threshold"`
-	ScoreThresholds    []int          `yaml:"score_thresholds"`
-	ReportAliases      []string       `yaml:"report_aliases"`
-	WatchMessageEdits  bool           `yaml:"watch_message_edits"`
+	EnforcementEnabled  bool           `yaml:"enforcement_enabled"`
+	RulesetVersion      string         `yaml:"ruleset_version"`
+	Weights             map[string]int `yaml:"weights"`
+	RiskAIThreshold     int            `yaml:"risk_ai_threshold"`
+	AlertThreshold      int            `yaml:"alert_threshold"`
+	ScoreThresholds     []int          `yaml:"score_thresholds"`
+	ReportAliases       []string       `yaml:"report_aliases"`
+	WatchMessageEdits   bool           `yaml:"watch_message_edits"`
+	IgnoreAdminMessages bool           `yaml:"ignore_admin_messages"`
 }
 type Trust struct {
 	MaximumRiskDiscount int `yaml:"maximum_risk_discount"`
@@ -101,7 +104,7 @@ func Defaults() *Config {
 		Notifications: Notifications{BatchWindowSeconds: 20, DuplicateCooldownSeconds: 300}, HealthAddr: "127.0.0.1:8080",
 	}
 }
-func Load(path string) (*Config, error) {
+func loadFile(path string) (*Config, error) {
 	c := Defaults()
 	if path != "" {
 		file, err := os.Open(path)
@@ -129,6 +132,30 @@ func Load(path string) (*Config, error) {
 		if err = dec.Decode(&extra); err != io.EOF {
 			return nil, fmt.Errorf("configuration must contain exactly one YAML document")
 		}
+	}
+	return c, nil
+}
+
+// LoadPolicy validates offline analysis settings without reading credentials or calling external services.
+func LoadPolicy(path string) (*Config, error) {
+	c, err := loadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	validation := *c
+	validation.DatabaseURL = "offline"
+	validation.BotToken = "offline"
+	validation.AI.Enabled = false
+	if err := validation.Validate(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func Load(path string) (*Config, error) {
+	c, err := loadFile(path)
+	if err != nil {
+		return nil, err
 	}
 	c.DatabaseURL = os.Getenv("DATABASE_URL")
 	c.BotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
@@ -204,9 +231,12 @@ func (c *Config) Validate() error {
 	if len(m.ReportAliases) == 0 {
 		return fmt.Errorf("at least one report alias required")
 	}
-	knownWeights := rules.DefaultConfig().Weights
+	knownWeights := make(map[string]bool)
+	for _, code := range rules.AllowedCodes() {
+		knownWeights[code] = true
+	}
 	for code, v := range m.Weights {
-		_, known := knownWeights[code]
+		known := knownWeights[code]
 		if !known || code == "" || v < 0 || v > 100 {
 			return fmt.Errorf("invalid rule weight")
 		}
@@ -250,14 +280,40 @@ func (c *Config) Validate() error {
 	if len(c.Links.AllowDomains) == 0 {
 		return fmt.Errorf("links.allow_domains required")
 	}
+	for _, name := range c.Links.KnownBots {
+		if !urlscan.ValidBotUsername(name) {
+			return fmt.Errorf("links.known_bots requires valid Telegram usernames without @")
+		}
+	}
 	if c.Notifications.BatchWindowSeconds < 0 || c.Notifications.BatchWindowSeconds > 300 || c.Notifications.DuplicateCooldownSeconds < 0 {
 		return fmt.Errorf("invalid notification timing")
 	}
 	if _, _, err := net.SplitHostPort(c.HealthAddr); err != nil {
 		return fmt.Errorf("invalid HEALTH_ADDR")
 	}
+	if _, err := c.BuildAnalyzer(); err != nil {
+		// Module errors may include untrusted dictionary values. Do not echo them into startup logs.
+		return fmt.Errorf("analysis: invalid module, matcher, threshold, family cap or required-check settings")
+	}
 	return nil
 }
+
+func (c *Config) RuleConfig() rules.Config {
+	r := rules.DefaultConfig()
+	r.Version = c.Moderation.RulesetVersion
+	r.AIThreshold = c.Moderation.RiskAIThreshold
+	r.MaxTrustDiscount = c.Trust.MaximumRiskDiscount
+	r.Thresholds = append([]int(nil), c.Moderation.ScoreThresholds...)
+	for code, weight := range c.Moderation.Weights {
+		r.Weights[code] = weight
+	}
+	return r
+}
+
+func (c *Config) BuildAnalyzer() (*rules.Analyzer, error) {
+	return rules.NewAnalyzer(c.RuleConfig(), c.Analysis)
+}
+
 func (c *Config) AISubsystemTimeout() time.Duration {
 	return time.Duration(c.AI.TimeoutSeconds) * time.Second
 }

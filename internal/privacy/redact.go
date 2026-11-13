@@ -29,12 +29,51 @@ func Limit(s string, n int) string {
 	return s
 }
 func Message(m domain.Message) domain.Message {
+	original := m
 	m.Text = Limit(Redact(m.Text), 16384)
 	m.Caption = Limit(Redact(m.Caption), 8192)
 	m.QuoteText = Limit(Redact(m.QuoteText), 2048)
+	if m.Text != original.Text || m.Caption != original.Caption || m.QuoteText != original.QuoteText {
+		m.FeaturesPartial = true
+		// Detached facts lose credential context (e.g. password=@name). Do not
+		// recover them with offsets into redacted text; preserve coverage as unknown.
+		if len(m.URLs) > 0 {
+			m.URLs = nil
+			m.URLsPartial = true
+			m.FeaturesPartial = true
+		}
+		if len(m.Mentions) > 0 {
+			m.Mentions = nil
+			m.FeaturesPartial = true
+		}
+	}
 	m.URLs = append([]domain.URL(nil), m.URLs...)
 	for i := range m.URLs {
 		m.URLs[i].Value = Limit(Redact(m.URLs[i].Value), 2048)
+		m.URLs[i].TelegramUsername = Limit(Redact(m.URLs[i].TelegramUsername), 32)
+		m.URLs[i].QueryKeys = append([]string(nil), m.URLs[i].QueryKeys...)
+		if len(m.URLs[i].QueryKeys) > 32 {
+			m.URLs[i].QueryKeys = m.URLs[i].QueryKeys[:32]
+			m.URLs[i].QueryKeysPartial = true
+		}
+		for j, key := range m.URLs[i].QueryKeys {
+			if len(key) > 64 {
+				m.URLs[i].QueryKeysPartial = true
+			}
+			m.URLs[i].QueryKeys[j] = Limit(Redact(key), 64)
+		}
+		m.FeaturesPartial = m.FeaturesPartial || m.URLs[i].QueryKeysPartial
+	}
+	m.Mentions = append([]domain.Mention(nil), m.Mentions...)
+	if len(m.Mentions) > 32 {
+		m.Mentions = m.Mentions[:32]
+		m.FeaturesPartial = true
+	}
+	for i := range m.Mentions {
+		m.Mentions[i].Username = Limit(Redact(m.Mentions[i].Username), 32)
+		if m.Mentions[i].BotStatus != "confirmed" && m.Mentions[i].BotStatus != "heuristic" {
+			m.Mentions[i].BotStatus = "unverified"
+		}
 	}
 	// Resolve URL entities before redaction. Offsets into changed text are no longer reliable.
 	m.Entities = redactEntities(m.Entities)

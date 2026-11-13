@@ -51,7 +51,7 @@ func (e *Engine) modelCommand(ctx context.Context, tx pgx.Tx, u domain.Update, a
 		return err
 	}
 	if e.Catalog == nil {
-		return e.ack(ctx, tx, *m, "Каталог моделей недоступен; текущая настройка не изменена.")
+		return e.ack(ctx, tx, *m, "Каталог моделей недоступен.")
 	}
 	var recent bool
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM model_panels WHERE owner_user_id=$1 AND created_at>now()-interval '5 seconds')`, *m.UserID).Scan(&recent); err != nil {
@@ -64,7 +64,19 @@ func (e *Engine) modelCommand(ctx context.Context, tx pgx.Tx, u domain.Update, a
 	ids, catalogErr := e.Catalog.Models(catalogCtx)
 	cancel()
 	if catalogErr != nil {
-		return e.ack(ctx, tx, *m, "Каталог провайдера временно недоступен; модель не изменена. Повторите /model позже.")
+		message := "Каталог недоступен. Повторите /model позже."
+		var failure *review.Error
+		if errors.As(catalogErr, &failure) {
+			switch failure.Code {
+			case "catalog_unauthorized":
+				message = "Нет доступа к каталогу (401). Проверьте AI_API_KEY."
+			case "catalog_forbidden":
+				message = "Ключ AI не даёт доступа к каталогу (403)."
+			case "catalog_rate_limited":
+				message = "Лимит запросов каталога. Повторите /model позже."
+			}
+		}
+		return e.ack(ctx, tx, *m, message)
 	}
 	query := privacy.Limit(privacy.Redact(strings.Join(args, " ")), 80)
 	state := notify.ModelPanel{Query: query, Selected: -1, Revision: 1, SettingVersion: setting.Version}
@@ -190,7 +202,7 @@ func (e *Engine) modelCallback(ctx context.Context, tx pgx.Tx, u domain.Update) 
 			state.SettingVersion = current.Version + 1
 		}
 		state.Selected = -1
-		state.Notice = "Модель сохранена. Новые попытки используют выбранную модель; текущие запросы не прерваны."
+		state.Notice = "Модель сохранена."
 	default:
 		return answer("Неизвестная кнопка. Откройте /model.")
 	}
@@ -201,5 +213,5 @@ func (e *Engine) modelCallback(ctx context.Context, tx pgx.Tx, u domain.Update) 
 	if err = e.queueModelPanel(ctx, tx, id, chat); err != nil {
 		return err
 	}
-	return answer("Панель обновлена; смена применяется только после подтверждения.")
+	return answer("Готово.")
 }

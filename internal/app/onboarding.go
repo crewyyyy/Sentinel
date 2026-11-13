@@ -199,7 +199,7 @@ func (e *Engine) connectionCallback(ctx context.Context, tx pgx.Tx, u domain.Upd
 	if _, err = tx.Exec(ctx, `INSERT INTO managed_chats(chat_id,active,source,approved_by,approved_at,membership_at) VALUES($1,true,'onboarding',$2,now(),$3) ON CONFLICT(chat_id) DO UPDATE SET active=true,source='onboarding',approved_by=EXCLUDED.approved_by,approved_at=now(),membership_at=EXCLUDED.membership_at,updated_at=now()`, chat, c.UserID, memberAt); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO chats(chat_id,chat_type,features) VALUES($1,$2,'{"bot_admin":true,"chat_member":"subscribed_requires_real_update"}') ON CONFLICT(chat_id) DO UPDATE SET chat_type=EXCLUDED.chat_type,features=EXCLUDED.features,updated_at=now()`, chat, chatType); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO chats(chat_id,chat_type,title,features) VALUES($1,$2,$3,'{"bot_admin":true,"chat_member":"subscribed_requires_real_update"}') ON CONFLICT(chat_id) DO UPDATE SET chat_type=EXCLUDED.chat_type,title=EXCLUDED.title,features=EXCLUDED.features,updated_at=now()`, chat, chatType, title); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE chat_connection_requests SET status=CASE WHEN id=$2 THEN 'approved' ELSE 'cancelled' END,revision=revision+1,updated_at=now() WHERE chat_id=$1 AND status='pending'`, chat, id); err != nil {
@@ -214,62 +214,5 @@ func (e *Engine) connectionCallback(ctx context.Context, tx pgx.Tx, u domain.Upd
 	return answer("Чат подключён. Наблюдение начинается с доступных новых сообщений; старая история не загружается.")
 }
 func (e *Engine) chatsCommand(ctx context.Context, tx pgx.Tx, u domain.Update) error {
-	m := u.Message
-	if !e.allowed(*m.UserID) {
-		return e.ack(ctx, tx, *m, "Доступ запрещён.")
-	}
-	if err := e.audit(ctx, tx, u, *m.UserID, true); err != nil {
-		return err
-	}
-	ids, err := e.chatIDs(ctx, tx)
-	if err != nil {
-		return err
-	}
-	text := "Подключение чатов: добавьте бота в группу и выдайте статус admin без ban/delete, затем подтвердите карточку в ЛС. Перед подтверждением уведомите участников об обработке и внешнем AI.\n\nДоступные подключённые чаты:"
-	shown := 0
-	unavailable := false
-	for _, chat := range ids {
-		allowed, err := e.authorized(ctx, *m.UserID, chat)
-		if err != nil {
-			// Do not disclose identifiers when current rights cannot be verified.
-			unavailable = true
-			continue
-		}
-		if allowed && shown < 20 {
-			text += fmt.Sprintf("\n• %d", chat)
-			shown++
-		}
-	}
-	if shown == 0 {
-		text += "\nПока нет доступных или подтверждённых правами чатов."
-	}
-	if unavailable {
-		text += "\nЧасть чатов не показана: текущие права проверить не удалось."
-	}
-	rows, err := tx.Query(ctx, `SELECT id,chat_id FROM chat_connection_requests WHERE owner_user_id=$1 AND status='pending' AND expires_at>now() ORDER BY updated_at DESC LIMIT 20`, *m.UserID)
-	if err != nil {
-		return err
-	}
-	type pending struct{ id, chat int64 }
-	requests := []pending{}
-	for rows.Next() {
-		var p pending
-		if err = rows.Scan(&p.id, &p.chat); err != nil {
-			rows.Close()
-			return err
-		}
-		requests = append(requests, p)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, request := range requests {
-		if err = e.queueConnection(ctx, tx, request.id, *m.UserID, request.chat); err != nil {
-			return err
-		}
-	}
-	text += fmt.Sprintf("\n\nОжидающих заявок: %d (показаны первые 20). Карточки будут отправлены в ЛС после проверки прав.\n/model — выбрать модель; /status — состояние.", len(requests))
-	return e.text(ctx, tx, fmt.Sprintf("ack:%d:%d", m.ChatID, m.ID), notify.Delivery{ChatID: m.ChatID, Private: true, OperatorOnly: true, Text: text}, "text", "")
+	return e.openHome(ctx, tx, u)
 }

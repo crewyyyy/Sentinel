@@ -27,6 +27,15 @@ const adminChat int64 = -1002222222222
 type adminFake struct{ valid bool }
 
 func (a *adminFake) IsAdmin(context.Context, int64, int64) (bool, error) { return a.valid, nil }
+func mustEngine(t *testing.T, store *storage.Store, c *config.Config, admins AdminChecker, botID, username string) *Engine {
+	t.Helper()
+	e, err := NewEngine(store, c, admins, botID, username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
 func testEngine(t *testing.T) *Engine {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -69,7 +78,7 @@ func testEngine(t *testing.T) *Engine {
 	c.Telegram.AllowedAdminIDs = []int64{111}
 	c.AI.Model = "fake"
 	c.Notifications.BatchWindowSeconds = 0
-	return NewEngine(s, c, &adminFake{true}, "testbot", "our_bot")
+	return mustEngine(t, s, c, &adminFake{true}, "testbot", "our_bot")
 }
 func msg(id, user int64, text string) domain.Message {
 	return domain.Message{ChatID: testChat, ID: id, UserID: &user, Date: time.Now().UTC(), Text: text, ChatType: "supergroup", ContentType: "text", Version: 1}
@@ -123,7 +132,7 @@ func TestMigrationsAtomicDedupAndRestart(t *testing.T) {
 	if n := number(t, e, `SELECT messages_count FROM chat_user_stats WHERE chat_id=$1 AND user_id=123`, testChat); n != 1 {
 		t.Fatal("double count", n)
 	}
-	e = NewEngine(e.Store, e.Config, e.Admins, e.BotID, e.Username)
+	e = mustEngine(t, e.Store, e.Config, e.Admins, e.BotID, e.Username)
 	m = msg(2, 123, "Ещё привет")
 	deliver(t, e, domain.Update{ID: 2, Message: &m})
 	if n := number(t, e, `SELECT count(*) FROM ai_jobs`); n != 1 {
@@ -314,9 +323,9 @@ func (p providerFake) Review(_ context.Context, r domain.ReviewRequest) (domain.
 }
 
 type notifierFake struct {
-	sends, edits int
-	fail         bool
-	public       bool
+	sends, edits, bannerSends, captionEdits int
+	fail                                    bool
+	public                                  bool
 }
 
 func (n *notifierFake) PrivateDestination(context.Context, int64) (bool, error) {
@@ -333,6 +342,14 @@ func (n *notifierFake) Send(context.Context, int64, string, *models.InlineKeyboa
 func (n *notifierFake) Edit(context.Context, int64, int64, string, *models.InlineKeyboardMarkup) error {
 	n.edits++
 	return nil
+}
+func (n *notifierFake) SendBanner(ctx context.Context, chat int64, text string, kb *models.InlineKeyboardMarkup) (int64, error) {
+	n.bannerSends++
+	return n.Send(ctx, chat, text, kb)
+}
+func (n *notifierFake) EditCaption(ctx context.Context, chat, message int64, text string, kb *models.InlineKeyboardMarkup) error {
+	n.captionEdits++
+	return n.Edit(ctx, chat, message, text, kb)
 }
 func (n *notifierFake) AnswerCallback(context.Context, string, string) error { return nil }
 func TestFullFlowRetriesOutboxAndPrivacy(t *testing.T) {

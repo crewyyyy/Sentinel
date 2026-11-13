@@ -21,7 +21,6 @@ import (
 	"sentinel/internal/rules"
 	"sentinel/internal/storage"
 	"sentinel/internal/telegram"
-	"sentinel/internal/urlscan"
 )
 
 func main() {
@@ -47,7 +46,15 @@ func run(ctx context.Context, args []string) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	explicitConfig := false
+	f.Visit(func(value *flag.Flag) {
+		if value.Name == "config" {
+			explicitConfig = true
+		}
+	})
 	switch cmd {
+	case "modules":
+		return json.NewEncoder(os.Stdout).Encode(rules.Catalog())
 	case "healthcheck":
 		addr := os.Getenv("HEALTH_ADDR")
 		if addr == "" {
@@ -87,17 +94,32 @@ func run(ctx context.Context, args []string) error {
 		if u.Message == nil {
 			return json.NewEncoder(os.Stdout).Encode(u)
 		}
-		m := *u.Message
-		m.URLs = urlscan.New(config.Defaults().Links.AllowDomains, nil, nil, nil).Scan(m)
-		m = privacy.Message(m)
-		a := rules.Assess(m, m.URLs, true, 0, rules.DefaultConfig())
+		c := config.Defaults()
+		if explicitConfig {
+			c, err = config.LoadPolicy(*path)
+			if err != nil {
+				return err
+			}
+		}
+		e, err := app.NewEngine(nil, c, nil, "offline", "")
+		if err != nil {
+			return err
+		}
+		m := privacy.Message(e.Scanner.Extract(*u.Message))
+		a := e.Analyzer.Assess(m, m.URLs, true, 0)
 		return json.NewEncoder(os.Stdout).Encode(struct {
 			Message    domain.Message
 			Assessment domain.Assessment
 			AI         string
 		}{m, a, "not called (offline inspect)"})
 	}
-	c, err := config.Load(*path)
+	var c *config.Config
+	var err error
+	if cmd == "replay" {
+		c, err = config.LoadPolicy(*path)
+	} else {
+		c, err = config.Load(*path)
+	}
 	if err != nil {
 		return err
 	}
@@ -105,20 +127,23 @@ func run(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stdout, "configuration valid; observe-only; no network calls")
 		return nil
 	}
-	e := app.NewEngine(nil, c, nil, "offline", "")
+	e, err := app.NewEngine(nil, c, nil, "offline", "")
+	if err != nil {
+		return err
+	}
 	if cmd == "replay" {
 		r, err := os.Open(*file)
 		if err != nil {
 			return err
 		}
 		defer r.Close()
-		return app.Replay(r, os.Stdout, e.Rules)
+		return app.ReplayWithAnalyzer(r, os.Stdout, e.Analyzer, e.Rules.AIThreshold)
 	}
 	if cmd == "run" {
 		return app.Run(ctx, c)
 	}
 	if cmd != "export" && cmd != "forget" {
-		return fmt.Errorf("unknown command; use run, validate, migrate, inspect, replay, export, forget, healthcheck")
+		return fmt.Errorf("unknown command; use run, validate, migrate, modules, inspect, replay, export, forget, healthcheck")
 	}
 	s, err := storage.New(ctx, c.DatabaseURL)
 	if err != nil {

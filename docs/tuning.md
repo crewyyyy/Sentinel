@@ -1,6 +1,6 @@
 # Offline evaluation и feedback
 
-Метка администратора — strong label, санкция без установленной причины — только weak evidence, report — запрос на проверку, AI — prediction. Код не делает online fine-tuning, не меняет правила после бана и не обновляет permanent denylist автоматически.
+Для оценки используются метки администратора. Жалобы и результаты AI хранятся отдельно. Правила и модель обновляет оператор после проверки корпуса.
 
 ```bash
 mkdir -p exports
@@ -23,6 +23,8 @@ sentinel replay --config configs/candidate.yaml --file exports/holdout.jsonl
 
 Replay **локальный**, не вызывает LLM и не изменяет исходные оценки/БД. Он сравнивает threshold-предсказание deterministic rules с human labels: TP/FP/TN/FN, precision/recall (null, если нет знаменателя), число review-required. Это не итоговая accuracy LLM и не подтверждённая стоимость. Изменение allowlist требует replay URL extraction из исходных fixtures — текущий JSONL содержит зафиксированные URL flags и позволяет сравнивать прежде всего веса/пороги/trust-discount.
 
+Модули, словари и caps настраиваются через `analysis` в YAML: [инструкция](analysis-modules.md). `modules`, `inspect` и `replay` работают без runtime-ключей. Поле `IncompleteFeatures` считает samples с неизвестной версией или неполным набором признаков; включённый `referral_cues` направляет такие samples на review, не утверждая наличие рефералки. Для проверки новых extractors нужны исходные синтетические fixtures или вручную проверенные samples текущего формата.
+
 Для цены сравните AIRequired с вашими измеренными usage/job и тарифами; если usage неизвестен, не выдавайте точную сумму. Token/currency hard budgets ещё не реализованы; request-limit ограничивает только optional attempts.
 
 Перед публикацией новой версии:
@@ -31,4 +33,4 @@ Replay **локальный**, не вызывает LLM и не изменяе�
 2. Удалить дубли/похожие кампании между train и holdout, зафиксировать исходные данные и версии.
 3. Отдельно измерить качество и нагрузку по категориям. Не подбирать веса на holdout и затем объявлять его независимой оценкой.
 4. Дать человеку review диффа и false positives, сохранить предыдущий YAML/model/prompt, повысить version, validate + tests + restart.
-5. При регрессии вернуть прошлый совместимый snapshot. Новые отзывы пополняют датасет; они не означают, что модель уже «научилась».
+5. При регрессии вернуть прошлые совместимые image и YAML. Новые отзывы пополняют датасет.

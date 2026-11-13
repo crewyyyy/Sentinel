@@ -192,7 +192,7 @@ ModerationEvent {
 
 README должен позволять новому пользователю с Ubuntu VPS запустить сервис самостоятельно:
 
-1. Что делает бот, ограничения Bot API, что **не банит**.
+1. Что делает бот и какие ограничения Bot API влияют на его работу.
 2. Требования (Go для dev, Docker + Compose для production, Postgres), создание бота, выбор privacy mode, настройка admin/chat IDs.
 3. Полный quick start с `git clone`, копированием `.env.example`, запуском Compose и миграциями.
 4. Как проверить, что бот действительно получает сообщения и `chat_member` updates.

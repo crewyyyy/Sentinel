@@ -19,17 +19,24 @@ import (
 
 // Sample deliberately excludes Telegram IDs/usernames and all unneeded context. Text still requires privacy review.
 type Sample struct {
-	Text      string       `json:"text"`
-	Caption   string       `json:"caption,omitempty"`
-	URLs      []domain.URL `json:"urls"`
-	First     bool         `json:"first"`
-	Quoted    bool         `json:"quoted"`
-	Forwarded bool         `json:"forwarded"`
-	Trust     int          `json:"trust"`
-	Label     string       `json:"label"`
-	Group     string       `json:"campaign_group"`
-	Split     string       `json:"split"`
-	Day       string       `json:"day"`
+	Text            string           `json:"text"`
+	Caption         string           `json:"caption,omitempty"`
+	QuoteText       string           `json:"quote_text,omitempty"`
+	Mentions        []domain.Mention `json:"mentions,omitempty"`
+	RecentSimilar   int              `json:"recent_similar,omitempty"`
+	RecentLinks     int              `json:"recent_links,omitempty"`
+	FeaturesVersion int              `json:"features_version,omitempty"`
+	FeaturesPartial bool             `json:"features_partial,omitempty"`
+	URLs            []domain.URL     `json:"urls"`
+	URLsPartial     bool             `json:"urls_partial,omitempty"`
+	First           bool             `json:"first"`
+	Quoted          bool             `json:"quoted"`
+	Forwarded       bool             `json:"forwarded"`
+	Trust           int              `json:"trust"`
+	Label           string           `json:"label"`
+	Group           string           `json:"campaign_group"`
+	Split           string           `json:"split"`
+	Day             string           `json:"day"`
 }
 
 func (e *Engine) Export(ctx context.Context, w io.Writer) error {
@@ -54,7 +61,10 @@ func (e *Engine) Export(ctx context.Context, w io.Writer) error {
 		}
 		domains := []string{}
 		urls := append([]domain.URL(nil), c.Assessment.URLs...)
+		partialFeatures := c.Message.FeaturesPartial || c.Message.URLsPartial || len(c.Message.Mentions) > 0
 		for i := range urls {
+			partialFeatures = partialFeatures || urls[i].TelegramUsername != ""
+			urls[i].TelegramUsername = ""
 			domains = append(domains, urls[i].Domain)
 			urls[i].Value = urls[i].Host
 			urls[i].Source = "export"
@@ -73,7 +83,7 @@ func (e *Engine) Export(ctx context.Context, w io.Writer) error {
 		for _, s := range c.Assessment.Signals {
 			first = first || s.Code == "FIRST_OBSERVED"
 		}
-		samples = append(samples, Sample{Text: privacy.Redact(c.Message.Text), Caption: privacy.Redact(c.Message.Caption), URLs: urls, First: first, Quoted: c.Message.Quoted, Forwarded: c.Message.Forwarded, Trust: c.Assessment.Trust, Label: label, Group: key, Day: date.UTC().Format("2006-01-02")})
+		samples = append(samples, Sample{Text: privacy.Redact(c.Message.Text), Caption: privacy.Redact(c.Message.Caption), QuoteText: privacy.Redact(c.Message.QuoteText), RecentSimilar: c.Message.RecentSimilar, RecentLinks: c.Message.RecentLinks, FeaturesVersion: c.Message.FeaturesVersion, FeaturesPartial: partialFeatures, URLs: urls, URLsPartial: c.Message.URLsPartial, First: first, Quoted: c.Message.Quoted, Forwarded: c.Message.Forwarded, Trust: c.Assessment.Trust, Label: label, Group: key, Day: date.UTC().Format("2006-01-02")})
 	}
 	if err = rows.Err(); err != nil {
 		return err
@@ -94,9 +104,20 @@ func (e *Engine) Export(ctx context.Context, w io.Writer) error {
 type ReplayResult struct {
 	Samples, TP, FP, TN, FN, AIRequired int
 	Precision, Recall                   *float64
+	IncompleteFeatures                  int
 }
 
 func Replay(r io.Reader, w io.Writer, c rules.Config) error {
+	analyzer, err := rules.NewAnalyzer(c, rules.Options{})
+	if err != nil {
+		return fmt.Errorf("initialize replay analysis: invalid settings")
+	}
+	return ReplayWithAnalyzer(r, w, analyzer, c.AIThreshold)
+}
+
+// ReplayWithAnalyzer uses the same immutable policy as live ingestion; it never calls AI.
+// IncompleteFeatures prevents older or anonymized samples being mistaken for full extractor coverage.
+func ReplayWithAnalyzer(r io.Reader, w io.Writer, analyzer *rules.Analyzer, threshold int) error {
 	scan := bufio.NewScanner(r)
 	scan.Buffer(make([]byte, 65536), 256<<10)
 	result := ReplayResult{}
@@ -106,13 +127,16 @@ func Replay(r io.Reader, w io.Writer, c rules.Config) error {
 			return fmt.Errorf("decode dataset line %d: %w", result.Samples+1, err)
 		}
 		id := int64(1)
-		m := domain.Message{Text: s.Text, Caption: s.Caption, Quoted: s.Quoted, Forwarded: s.Forwarded, UserID: &id}
-		a := rules.Assess(m, s.URLs, s.First, s.Trust, c)
+		m := domain.Message{Text: s.Text, Caption: s.Caption, QuoteText: s.QuoteText, Quoted: s.Quoted, Forwarded: s.Forwarded, UserID: &id, Mentions: s.Mentions, URLsPartial: s.URLsPartial, RecentSimilar: s.RecentSimilar, RecentLinks: s.RecentLinks, FeaturesVersion: s.FeaturesVersion, FeaturesPartial: s.FeaturesPartial || s.URLsPartial || s.FeaturesVersion != domain.CurrentFeaturesVersion}
+		a := analyzer.Assess(m, s.URLs, s.First, s.Trust)
 		result.Samples++
+		if m.FeaturesPartial {
+			result.IncompleteFeatures++
+		}
 		if a.ReviewRequired {
 			result.AIRequired++
 		}
-		predicted := a.Score >= c.AIThreshold
+		predicted := a.Score >= threshold
 		positive := s.Label == "spam"
 		switch {
 		case positive && predicted:

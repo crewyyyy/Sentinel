@@ -27,13 +27,16 @@ func RenderModels(id int64, p ModelPanel, current string) (string, *models.Inlin
 		return fmt.Sprintf("mdl:%d:%d:%s:%d", id, p.Revision, action, value)
 	}
 	kb := &models.InlineKeyboardMarkup{}
-	text := "🤖 <b>Модель AI-проверки</b>\nТекущая: <code>" + esc(current) + "</code>\n"
+	text := heading(iconAI, "🤖", "Модель AI") + "\nТекущая: <code>" + esc(current) + "</code>\n"
 	if p.Notice != "" {
-		text += esc(p.Notice) + "\n"
+		text += "\n" + esc(p.Notice) + "\n"
 	}
 	if p.Selected >= 0 && p.Selected < len(p.Models) {
-		text += "\nВыбрана: <code>" + esc(p.Models[p.Selected]) + "</code>\nПрименить для новых попыток, включая повторы pending-задач? Уже выполняющиеся запросы не прерываются.\n\nСмена не проверяет совместимость модели и не гарантирует бесплатность/subscription. Тарифы других моделей считаются неизвестными."
-		kb.InlineKeyboard = [][]models.InlineKeyboardButton{{{Text: "✅ Применить", CallbackData: callback("a", p.Selected)}}, {{Text: "← Назад к списку", CallbackData: callback("p", p.Page)}}}
+		text += "\nВыбрана: <code>" + esc(p.Models[p.Selected]) + "</code>\n\nПрименить модель?"
+		kb.InlineKeyboard = [][]models.InlineKeyboardButton{
+			{button("Применить модель", callback("a", p.Selected), iconCheck, "success")},
+			{button("К списку", callback("p", p.Page), iconBack, "")},
+		}
 		return text, kb
 	}
 	pages := max(1, (len(p.Models)+ModelsPerPage-1)/ModelsPerPage)
@@ -43,27 +46,30 @@ func RenderModels(id int64, p ModelPanel, current string) (string, *models.Inlin
 	}
 	text += fmt.Sprintf("\nСтраница %d/%d · моделей %d\n", page+1, pages, len(p.Models))
 	for i := page * ModelsPerPage; i < min(len(p.Models), (page+1)*ModelsPerPage); i++ {
-		label := p.Models[i]
-		if len(label) > 60 {
-			label = label[:28] + "…" + label[len(label)-28:]
+		label := []rune(privacy.Redact(p.Models[i]))
+		if len(label) > 46 {
+			label = append(append(label[:22:22], '…'), label[len(label)-22:]...)
 		}
+		b := button(string(label), callback("s", i), "", "")
 		if p.Models[i] == current {
-			label = "✓ " + label
+			b.IconCustomEmojiID = iconCheck
+			b.Style = "primary"
+			b.Text = "Текущая · " + b.Text
 		}
-		kb.InlineKeyboard = append(kb.InlineKeyboard, []models.InlineKeyboardButton{{Text: label, CallbackData: callback("s", i)}})
+		kb.InlineKeyboard = append(kb.InlineKeyboard, []models.InlineKeyboardButton{b})
 	}
 	if len(p.Models) == 0 {
-		text += "Ничего не найдено.\n"
+		text += "Ничего не найдено. Измените запрос: /model название\n"
 	}
 	row := []models.InlineKeyboardButton{}
 	if page > 0 {
-		row = append(row, models.InlineKeyboardButton{Text: "← Назад", CallbackData: callback("p", page-1)})
+		row = append(row, button("Назад", callback("p", page-1), iconBack, ""))
 	}
-	row = append(row, models.InlineKeyboardButton{Text: fmt.Sprintf("%d / %d", page+1, pages), CallbackData: callback("p", page)})
+	row = append(row, button(fmt.Sprintf("%d / %d", page+1, pages), callback("p", page), "", ""))
 	if page+1 < pages {
-		row = append(row, models.InlineKeyboardButton{Text: "Вперёд →", CallbackData: callback("p", page+1)})
+		row = append(row, button("Далее", callback("p", page+1), iconNext, ""))
 	}
 	kb.InlineKeyboard = append(kb.InlineKeyboard, row)
-	text += "\nВыберите модель → подтвердите. Поиск: /model luna\nКаталог не гарантирует поддержку chat completions/JSON. При ошибке jobs остаются pending. Панель доступна автору 30 минут."
+	text += "\nПоиск: /model название"
 	return strings.TrimSpace(text), kb
 }

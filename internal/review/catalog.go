@@ -41,7 +41,16 @@ func (p *Compatible) Models(ctx context.Context) ([]string, error) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, &Error{Code: "catalog_http_error"}
+		code := "catalog_http_error"
+		switch response.StatusCode {
+		case http.StatusUnauthorized:
+			code = "catalog_unauthorized"
+		case http.StatusForbidden:
+			code = "catalog_forbidden"
+		case http.StatusTooManyRequests:
+			code = "catalog_rate_limited"
+		}
+		return nil, &Error{Code: code}
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, (512<<10)+1))
 	if err != nil || len(body) > 512<<10 {

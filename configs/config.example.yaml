@@ -9,14 +9,39 @@ telegram:
   allowed_admin_ids: [111111111]
 moderation:
   enforcement_enabled: false
-  ruleset_version: v1
+  ruleset_version: v4-compact-copy
   risk_ai_threshold: 45
   alert_threshold: 45
   score_thresholds: [25, 45, 70, 85]
   report_aliases: ["/report", "!репорт", "!report"]
   watch_message_edits: true
+  # Skip automatic analysis of chat owners/admins; omitted defaults to false.
+  # Explicit /report requests still work. Restart after changing this flag.
+  ignore_admin_messages: true
   # Weights not supplied here use internal/rules.DefaultConfig(). Bump ruleset_version after changes.
   weights: {}
+# Existing deployments without this block retain v1 behavior.
+# Change ruleset_version before changing modules, dictionaries or caps.
+analysis:
+  modules:
+    referral_cues:
+      enabled: true
+    # Chat rule: matching offers require review, never automatic sanctions.
+    # /modules can override optional modules per chat without restart.
+    sales:
+      enabled: true
+      thresholds: {policy: 1, sensitivity: 2, match_window_tokens: 12}
+    distribution:
+      enabled: true
+      thresholds: {policy: 1, sensitivity: 2, match_window_tokens: 12}
+    services:
+      enabled: true
+      thresholds: {policy: 1, sensitivity: 2, match_window_tokens: 12}
+    recruitment:
+      enabled: true
+      thresholds: {policy: 0, sensitivity: 2, match_window_tokens: 12}
+  # Optional score caps do not disable mandatory review; absent means uncapped.
+  family_caps: {}
 trust:
   maximum_risk_discount: 20
   admin_reply_bonus_cap: 15
@@ -46,6 +71,7 @@ links:
   # Explicitly verified bot usernames, without @. Suffix bot alone remains a heuristic.
   known_bots: []
 notifications:
+  # Coalesce background evidence refreshes only; first cards, AI results and admin actions are immediate.
   batch_window_seconds: 20
   duplicate_cooldown_seconds: 300
   send_to_private_admins: false

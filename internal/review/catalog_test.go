@@ -46,6 +46,27 @@ func TestCatalogNeverFollowsRedirects(t *testing.T) {
 		t.Fatal("catalog followed redirect", err)
 	}
 }
+func TestCatalogHTTPStatusIsActionableWithoutProviderBody(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		code   string
+	}{{401, "catalog_unauthorized"}, {403, "catalog_forbidden"}, {429, "catalog_rate_limited"}, {500, "catalog_http_error"}} {
+		t.Run(test.code, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.status)
+				w.Write([]byte(`{"error":"fixture-private-key"}`))
+			}))
+			defer server.Close()
+			provider := &Compatible{Client: server.Client(), BaseURL: server.URL}
+			_, err := provider.Models(context.Background())
+			failure, ok := err.(*Error)
+			if !ok || failure.Code != test.code || strings.Contains(err.Error(), "fixture-private-key") {
+				t.Fatal("catalog status lost or body leaked", err)
+			}
+		})
+	}
+}
+
 func TestPerAttemptModelAndVersionedJSONPrompt(t *testing.T) {
 	keys := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

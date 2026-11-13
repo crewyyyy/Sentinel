@@ -99,6 +99,35 @@ func TestPollingOffsetsAnd429(t *testing.T) {
 		t.Fatal("429 accepted")
 	}
 }
+func TestSenderClearsKeyboardAfterConnectionDecision(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Error(err)
+			return
+		}
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+		markup := r.FormValue("reply_markup")
+		if markup != `{"inline_keyboard":[]}` {
+			t.Errorf("resolved card must explicitly clear buttons, got %q", markup)
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"ok":false,"error_code":400,"description":"Bad Request: object expected as reply markup"}`)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true,"result":{"message_id":77,"date":1,"chat":{"id":111,"type":"private"}}}`)
+	}))
+	defer server.Close()
+	b, err := bot.New("123:fake", bot.WithSkipGetMe(), bot.WithServerURL(server.URL), bot.WithHTTPClient(0, server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := Sender{Bot: b}
+	if err := sender.Edit(context.Background(), 111, 77, "<b>Чат подключён</b>", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSenderNoSanctions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/sendMessage") {
@@ -110,6 +139,9 @@ func TestSenderNoSanctions(t *testing.T) {
 		}
 		if !strings.Contains(string(b), `"is_disabled":true`) {
 			t.Error(string(b))
+		}
+		if strings.Contains(string(b), `name="reply_markup"`) {
+			t.Error("plain send must omit reply_markup instead of sending null")
 		}
 		fmt.Fprint(w, `{"ok":true,"result":{"message_id":77,"date":1,"chat":{"id":111,"type":"private"}}}`)
 	}))

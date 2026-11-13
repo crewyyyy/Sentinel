@@ -11,6 +11,17 @@ type Entity struct {
 	Bot    bool   `json:"bot,omitempty"`
 }
 
+// CurrentFeaturesVersion identifies canonical extracted evidence, not the policy used to score it.
+const CurrentFeaturesVersion = 2
+
+type Mention struct {
+	Username  string `json:"username"`
+	Source    string `json:"source"`
+	BotStatus string `json:"bot_status"` // confirmed, heuristic, or unverified
+	Offset    int    `json:"offset"`     // UTF-16 offset in the original source, never the redacted text
+	Length    int    `json:"length"`
+}
+
 type Message struct {
 	ChatID          int64      `json:"chat_id"`
 	ID              int64      `json:"message_id"`
@@ -21,6 +32,10 @@ type Message struct {
 	ChatUsername    string     `json:"chat_username,omitempty"`
 	Username        string     `json:"username,omitempty"`
 	URLs            []URL      `json:"extracted_urls,omitempty"`
+	URLsPartial     bool       `json:"urls_partial,omitempty"`
+	Mentions        []Mention  `json:"mentions,omitempty"`
+	FeaturesVersion int        `json:"features_version,omitempty"`
+	FeaturesPartial bool       `json:"features_partial,omitempty"`
 	Text            string     `json:"text"`
 	Caption         string     `json:"caption,omitempty"`
 	Entities        []Entity   `json:"entities,omitempty"`
@@ -50,21 +65,24 @@ func (m Message) Content() string {
 }
 
 type URL struct {
-	Value        string `json:"url"`
-	Host         string `json:"host"`
-	Domain       string `json:"domain"`
-	Source       string `json:"source"`
-	Unknown      bool   `json:"unknown"`
-	Watch        bool   `json:"watch"`
-	Denied       bool   `json:"denied"`
-	Referral     bool   `json:"referral"`
-	Tracking     bool   `json:"tracking"`
-	Shortener    bool   `json:"shortener"`
-	Telegram     bool   `json:"telegram"`
-	Bot          bool   `json:"bot"`
-	BotHeuristic bool   `json:"bot_heuristic"`
-	Obfuscated   bool   `json:"obfuscated"`
-	IDN          bool   `json:"idn"`
+	QueryKeys        []string `json:"query_keys,omitempty"`
+	QueryKeysPartial bool     `json:"query_keys_partial,omitempty"`
+	TelegramUsername string   `json:"telegram_username,omitempty"`
+	Value            string   `json:"url"`
+	Host             string   `json:"host"`
+	Domain           string   `json:"domain"`
+	Source           string   `json:"source"`
+	Unknown          bool     `json:"unknown"`
+	Watch            bool     `json:"watch"`
+	Denied           bool     `json:"denied"`
+	Referral         bool     `json:"referral"`
+	Tracking         bool     `json:"tracking"`
+	Shortener        bool     `json:"shortener"`
+	Telegram         bool     `json:"telegram"`
+	Bot              bool     `json:"bot"`
+	BotHeuristic     bool     `json:"bot_heuristic"`
+	Obfuscated       bool     `json:"obfuscated"`
+	IDN              bool     `json:"idn"`
 }
 type Signal struct {
 	Code           string  `json:"code"`
@@ -74,15 +92,30 @@ type Signal struct {
 	MandatoryAI    bool    `json:"mandatory_ai"`
 	RulesetVersion string  `json:"ruleset_version"`
 }
+type PolicyCheck struct {
+	Module string `json:"module"`
+	Mode   string `json:"mode"` // review or prohibited by chat policy; not a finding of guilt
+}
+
 type Assessment struct {
-	Band           string   `json:"risk_band"`
-	Score          int      `json:"risk_score"`
-	Trust          int      `json:"trust_at_detection"`
-	Mandatory      bool     `json:"mandatory"`
-	ReviewRequired bool     `json:"ai_review_required"`
-	Signals        []Signal `json:"signals"`
-	URLs           []URL    `json:"normalized_urls"`
-	Version        string   `json:"ruleset_version"`
+	PolicyChecks   []PolicyCheck `json:"policy_checks,omitempty"`
+	Band           string        `json:"risk_band"`
+	Score          int           `json:"risk_score"`
+	Trust          int           `json:"trust_at_detection"`
+	Mandatory      bool          `json:"mandatory"`
+	ReviewRequired bool          `json:"ai_review_required"`
+	Signals        []Signal      `json:"signals"`
+	URLs           []URL         `json:"normalized_urls"`
+	Version        string        `json:"ruleset_version"`
+}
+
+func (a Assessment) ProhibitedPolicyMatch() bool {
+	for _, check := range a.PolicyChecks {
+		if check.Mode == "prohibited" {
+			return true
+		}
+	}
+	return false
 }
 
 type ReviewRequest struct {

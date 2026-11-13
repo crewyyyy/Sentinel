@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -35,40 +36,38 @@ type Engine struct {
 	Catalog         review.ModelCatalog
 	Scanner         *urlscan.Scanner
 	Rules           rules.Config
+	Analyzer        *rules.Analyzer
+	analysisMu      sync.Mutex
+	analysisCache   map[string]*rules.Analyzer
 	BotID, Username string
 }
 
-func NewEngine(s *storage.Store, c *config.Config, admins AdminChecker, botID, username string) *Engine {
-	r := rules.DefaultConfig()
-	r.Version = c.Moderation.RulesetVersion
-	r.AIThreshold = c.Moderation.RiskAIThreshold
-	r.MaxTrustDiscount = c.Trust.MaximumRiskDiscount
-	r.Thresholds = append([]int(nil), c.Moderation.ScoreThresholds...)
-	for k, v := range c.Moderation.Weights {
-		r.Weights[k] = v
+func NewEngine(s *storage.Store, c *config.Config, admins AdminChecker, botID, username string) (*Engine, error) {
+	analyzer, err := c.BuildAnalyzer()
+	if err != nil {
+		return nil, fmt.Errorf("initialize analysis modules: invalid settings")
 	}
-	return &Engine{Store: s, Config: c, Admins: admins, Scanner: urlscan.New(c.Links.AllowDomains, c.Links.WatchDomains, c.Links.DenyDomains, c.Links.KnownBots), Rules: r, BotID: botID, Username: username}
+	return &Engine{Store: s, Config: c, Admins: admins, Scanner: urlscan.New(c.Links.AllowDomains, c.Links.WatchDomains, c.Links.DenyDomains, c.Links.KnownBots), Rules: c.RuleConfig(), Analyzer: analyzer, BotID: botID, Username: username}, nil
 }
 func (e *Engine) RegisterRules(ctx context.Context) error {
-	snapshot := struct {
-		Rules rules.Config
-		Links config.Links
-		Trust config.Trust
-	}{e.Rules, e.Config.Links, e.Config.Trust}
+	compiled, err := json.Marshal(e.Analyzer.Resolved().Config)
+	if err != nil {
+		return fmt.Errorf("encode compiled rules: %w", err)
+	}
+	configured, err := json.Marshal(e.Rules)
+	if err != nil {
+		return fmt.Errorf("encode configured rules: %w", err)
+	}
+	if string(compiled) != string(configured) {
+		return fmt.Errorf("engine rules changed after compilation; rebuild with a new version")
+	}
 	tx, err := e.Store.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO ruleset_versions(version,rules,model,prompt_version,source) VALUES($1,$2,$3,$4,'operator_configuration') ON CONFLICT DO NOTHING`, e.Rules.Version, snapshot, e.Config.AI.Model, prompts.CurrentVersion); err != nil {
+	if err = e.registerAnalyzer(ctx, tx, e.Analyzer, "operator_configuration"); err != nil {
 		return err
-	}
-	var same bool
-	if err = tx.QueryRow(ctx, `SELECT rules=$2::jsonb FROM ruleset_versions WHERE version=$1`, e.Rules.Version, snapshot).Scan(&same); err != nil {
-		return err
-	}
-	if !same {
-		return fmt.Errorf("ruleset_version already exists with different rules; use a new version")
 	}
 	return tx.Commit(ctx)
 }
@@ -142,6 +141,20 @@ func (e *Engine) process(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if _, err := tx.Exec(ctx, `INSERT INTO chats(chat_id,chat_type,username) VALUES($1,$2,$3) ON CONFLICT(chat_id) DO UPDATE SET username=EXCLUDED.username,updated_at=now()`, m.ChatID, m.ChatType, m.ChatUsername); err != nil {
 			return err
 		}
+		ignored, err := e.ignoreAdminMessage(ctx, *m)
+		if err != nil {
+			return err
+		}
+		if ignored {
+			if alias, reason := e.reportCommand(m.Content()); alias != "" && m.UserID != nil {
+				// A report is an explicit request, not automatic analysis of its author.
+				if _, err := tx.Exec(ctx, `INSERT INTO users(user_id,username) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,updated_at=now()`, *m.UserID, m.Username); err != nil {
+					return err
+				}
+				return e.report(ctx, tx, *m, reason)
+			}
+			return nil
+		}
 		saved, a, changed, err := e.message(ctx, tx, *m, false)
 		if err != nil {
 			return err
@@ -149,7 +162,7 @@ func (e *Engine) process(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if alias, reason := e.reportCommand(saved.Content()); alias != "" {
 			return e.report(ctx, tx, saved, reason)
 		}
-		if changed && a.Score >= e.Config.Moderation.AlertThreshold {
+		if changed && (a.Score >= e.Config.Moderation.AlertThreshold || a.ProhibitedPolicyMatch()) {
 			_, err = e.incident(ctx, tx, saved, a, nil, false)
 			return err
 		}
@@ -178,6 +191,10 @@ func fingerprint(m domain.Message) string {
 	return fmt.Sprintf("%x", sum)
 }
 func (e *Engine) message(ctx context.Context, tx pgx.Tx, m domain.Message, reported bool) (domain.Message, domain.Assessment, bool, error) {
+	if m.FeaturesVersion != domain.CurrentFeaturesVersion {
+		// Old inbox evidence cannot be reparsed with original UTF-16 offsets after redaction.
+		m.FeaturesPartial = true
+	}
 	if m.Entities == nil {
 		m.Entities = []domain.Entity{}
 	}
@@ -226,7 +243,7 @@ func (e *Engine) message(ctx context.Context, tx pgx.Tx, m domain.Message, repor
 			var a domain.Assessment
 			err := tx.QueryRow(ctx, `SELECT payload FROM risk_assessments WHERE chat_id=$1 AND message_id=$2 ORDER BY id DESC LIMIT 1`, m.ChatID, m.ID).Scan(&raw)
 			if errors.Is(err, pgx.ErrNoRows) {
-				a = rules.Assess(m, m.URLs, false, 0, e.Rules)
+				a = e.Analyzer.Assess(m, m.URLs, false, 0)
 				err = nil
 			} else if err == nil {
 				err = json.Unmarshal(raw, &a)
@@ -300,7 +317,11 @@ func (e *Engine) message(ctx context.Context, tx pgx.Tx, m domain.Message, repor
 			return m, domain.Assessment{}, false, err
 		}
 	}
-	a := rules.Assess(m, m.URLs, first, trustScore, e.Rules)
+	analyzer, err := e.chatAnalyzer(ctx, tx, m.ChatID)
+	if err != nil {
+		return m, domain.Assessment{}, false, err
+	}
+	a := analyzer.Assess(m, m.URLs, first, trustScore)
 	if _, err = tx.Exec(ctx, `INSERT INTO message_keys(chat_id,message_id,edit_version,user_id,fingerprint,last_edited_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(chat_id,message_id) DO UPDATE SET edit_version=EXCLUDED.edit_version,fingerprint=EXCLUDED.fingerprint,last_edited_at=EXCLUDED.last_edited_at`, m.ChatID, m.ID, m.Version, m.UserID, fingerprint(m), m.EditedAt); err != nil {
 		return m, a, false, err
 	}
@@ -524,9 +545,17 @@ func (e *Engine) incident(ctx context.Context, tx pgx.Tx, m domain.Message, a do
 	if _, err = tx.Exec(ctx, `UPDATE incidents SET payload=$2,updated_at=now() WHERE id=$1`, id, c); err != nil {
 		return 0, err
 	}
-	return id, e.queueCard(ctx, tx, id)
+	if ai != nil || report {
+		return id, e.queueCard(ctx, tx, id)
+	}
+	return id, e.queueCardAfter(ctx, tx, id, time.Duration(e.Config.Notifications.BatchWindowSeconds)*time.Second)
 }
 func (e *Engine) queueCard(ctx context.Context, tx pgx.Tx, id int64) error {
+	return e.queueCardAfter(ctx, tx, id, 0)
+}
+
+// First delivery and user actions are immediate. Only background refreshes of a sent card may wait.
+func (e *Engine) queueCardAfter(ctx context.Context, tx pgx.Tx, id int64, refreshDelay time.Duration) error {
 	dests := []int64{e.Config.Telegram.AdminChatID}
 	if e.Config.Notifications.SendToPrivateAdmins {
 		dests = append(dests, e.Config.Telegram.AllowedAdminIDs...)
@@ -534,7 +563,7 @@ func (e *Engine) queueCard(ctx context.Context, tx pgx.Tx, id int64) error {
 	for _, dest := range dests {
 		d := notify.Delivery{IncidentID: id, ChatID: dest, Private: true}
 		key := fmt.Sprintf("card:%d:%d", id, dest)
-		_, err := tx.Exec(ctx, `INSERT INTO outbox(idempotency_key,payload,available_at) VALUES($1,$2,now()+$3::interval) ON CONFLICT(idempotency_key) DO UPDATE SET payload=EXCLUDED.payload,status=CASE WHEN outbox.status='processing' THEN 'processing' ELSE 'pending' END,updated_at=now()`, key, d, fmt.Sprintf("%d seconds", e.Config.Notifications.BatchWindowSeconds))
+		_, err := tx.Exec(ctx, `INSERT INTO outbox(idempotency_key,payload,available_at) VALUES($1,$2,now()) ON CONFLICT(idempotency_key) DO UPDATE SET payload=EXCLUDED.payload,available_at=CASE WHEN outbox.status='done' THEN now()+$3::interval ELSE LEAST(outbox.available_at,now()+$3::interval) END,status=CASE WHEN outbox.status='processing' THEN 'processing' ELSE 'pending' END,updated_at=now()`, key, d, refreshDelay.String())
 		if err != nil {
 			return err
 		}

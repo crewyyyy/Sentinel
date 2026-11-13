@@ -9,13 +9,35 @@ import (
 )
 
 func RenderConnection(id, revision, chat int64, title, status string) (string, *models.InlineKeyboardMarkup) {
-	text := "🔗 <b>Подключение чата</b>\n" + html.EscapeString(privacy.Redact(title)) + fmt.Sprintf("\nChat ID: <code>%d</code>\n", chat)
+	name := html.EscapeString(privacy.Limit(privacy.Redact(title), 100))
+	header, icon, fallback := "Подключение чата", iconLink, "🔗"
+	body := ""
+	switch status {
+	case "approved":
+		header, icon, fallback = "Чат подключён", iconCheck, "✅"
+		body = "Наблюдение включено. /start — меню."
+	case "rejected":
+		header, icon, fallback = "Подключение отклонено", iconClose, "❌"
+		body = "Сообщения не собираются. Для новой заявки добавьте бота заново."
+	case "cancelled":
+		header, icon, fallback = "Заявка отменена", iconClose, "❌"
+		body = "Бот покинул чат или обработана другая заявка. Доступные чаты: /chats"
+	case "expired":
+		header = "Заявка истекла"
+		body = "Подключение не подтверждено за 24 часа. Для новой заявки добавьте бота заново."
+	case "pending":
+		body = "Сообщения пока не сохраняются. После подключения их будет проверять внешний AI.\n\nПеред подключением уведомите участников об обработке сообщений. Боту нужен статус администратора без прав банить и удалять."
+	default:
+		header = "Заявка недоступна"
+		body = "Проверьте состояние командой /chats."
+	}
+	text := heading(icon, fallback, header) + "\n" + name + fmt.Sprintf("\n<code>%d</code>\n\n", chat) + body
 	if status != "pending" {
-		states := map[string]string{"approved": "Подключён. Наблюдение начинается с доступных новых сообщений, старая история не загружается.", "rejected": "Отклонён. Наблюдение не включено.", "cancelled": "Запрос отменён; бот покинул чат или другая заявка уже обработана."}
-		text += states[status]
 		return text, nil
 	}
-	text += "\nСообщения пока не сохраняются и не отправляются AI.\n\nПосле подтверждения: наблюдение, ограниченный журнал, обязательные внешние AI-проверки и приватные уведомления. Бот не банит и не удаляет сообщения.\n\nПеред подтверждением уведомите участников об обработке и внешнем AI-провайдере. Подтверждая подключение, вы подтверждаете эту готовность. Бот должен быть администратором, без прав банить/удалять.\n\nЗапрос действует 24 часа; права повторно проверяются при нажатии."
-	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{{Text: "✅ Подключить", CallbackData: fmt.Sprintf("conn:%d:%d:yes", id, revision)}}, {{Text: "Не подключать", CallbackData: fmt.Sprintf("conn:%d:%d:no", id, revision)}}}}
+	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{button("Подключить", fmt.Sprintf("conn:%d:%d:yes", id, revision), iconCheck, "success")},
+		{button("Не подключать", fmt.Sprintf("conn:%d:%d:no", id, revision), iconClose, "")},
+	}}
 	return text, kb
 }

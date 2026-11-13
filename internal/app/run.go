@@ -25,16 +25,25 @@ func (e *Engine) Prepare(ctx context.Context, u domain.Update) (domain.Update, e
 		if err != nil {
 			return domain.Update{}, err
 		}
-		if !active && (!e.isAdminDestination(m.ChatID) || e.controlName(m.Content()) == "") {
+		ignored := false
+		if active {
+			if alias, _ := e.reportCommand(m.Content()); alias == "" {
+				ignored, err = e.ignoreAdminMessage(ctx, *m)
+				if err != nil {
+					return domain.Update{}, err
+				}
+			}
+		}
+		if ignored || !active && (!e.isAdminDestination(m.ChatID) || e.controlName(m.Content()) == "") {
 			u.Message = nil
 		} else {
 			m.ContentHash = ""
 			m.ContentHash = fingerprint(*m)
-			m.URLs = e.Scanner.Scan(*m)
+			*m = e.Scanner.Extract(*m)
 			if m.Reply != nil {
 				m.Reply.ContentHash = ""
 				m.Reply.ContentHash = fingerprint(*m.Reply)
-				m.Reply.URLs = e.Scanner.Scan(*m.Reply)
+				*m.Reply = e.Scanner.Extract(*m.Reply)
 			}
 			safe := privacy.Message(*m)
 			u.Message = &safe
@@ -100,7 +109,7 @@ func (e *Engine) Poll(ctx context.Context, p *telegram.Poller) error {
 			}
 			safe, prepareErr := e.Prepare(ctx, u)
 			if prepareErr != nil {
-				slog.Error("chat consent lookup failed; no acknowledgement advanced")
+				slog.Error("message preparation failed; no acknowledgement advanced")
 				if !wait(ctx, 5*time.Second) {
 					return ctx.Err()
 				}
@@ -192,7 +201,10 @@ func Run(ctx context.Context, c *config.Config) error {
 	if !private {
 		return fmt.Errorf("admin destination must be private, not a public group/channel")
 	}
-	e := NewEngine(s, c, sender, strconv.FormatInt(id, 10), username)
+	e, err := NewEngine(s, c, sender, strconv.FormatInt(id, 10), username)
+	if err != nil {
+		return err
+	}
 	if err = e.RegisterRules(ctx); err != nil {
 		return err
 	}

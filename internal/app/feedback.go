@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 
@@ -53,8 +54,14 @@ func (e *Engine) audit(ctx context.Context, tx pgx.Tx, u domain.Update, id int64
 }
 func (e *Engine) callback(ctx context.Context, tx pgx.Tx, u domain.Update) error {
 	c := u.Callback
+	if strings.HasPrefix(c.Data, "nav:") {
+		return e.homeCallback(ctx, tx, u)
+	}
 	if strings.HasPrefix(c.Data, "conn:") {
 		return e.connectionCallback(ctx, tx, u)
+	}
+	if strings.HasPrefix(c.Data, "mod:") {
+		return e.moduleCallback(ctx, tx, u)
 	}
 	if strings.HasPrefix(c.Data, "mdl:") {
 		return e.modelCallback(ctx, tx, u)
@@ -93,7 +100,7 @@ func (e *Engine) callback(ctx context.Context, tx pgx.Tx, u domain.Update) error
 		if err = e.label(ctx, tx, id, c.UserID, parts[1], "callback:"+c.ID, ""); err != nil {
 			return err
 		}
-		answer = "Метка обработана (закрытые кейсы не меняются); санкции не применяются"
+		answer = "Готово. Закрытые кейсы остаются без изменений."
 	}
 	return e.text(ctx, tx, "callback:"+c.ID, notify.Delivery{Text: answer}, "callback", c.ID)
 }
@@ -183,6 +190,10 @@ func (e *Engine) text(ctx context.Context, tx pgx.Tx, key string, d notify.Deliv
 	return err
 }
 func (e *Engine) ack(ctx context.Context, tx pgx.Tx, m domain.Message, text string, origin ...int64) error {
+	return e.ackHTML(ctx, tx, m, html.EscapeString(privacy.Redact(text)), origin...)
+}
+
+func (e *Engine) ackHTML(ctx context.Context, tx pgx.Tx, m domain.Message, text string, origin ...int64) error {
 	var source int64
 	if len(origin) > 0 {
 		source = origin[0]
@@ -265,7 +276,7 @@ func (e *Engine) report(ctx context.Context, tx pgx.Tx, m domain.Message, reason
 func (e *Engine) membership(ctx context.Context, tx pgx.Tx, u domain.Update) error {
 	m := *u.Membership
 	if m.Self {
-		_, err := tx.Exec(ctx, `INSERT INTO chats(chat_id,features) VALUES($1,$2) ON CONFLICT(chat_id) DO UPDATE SET features=EXCLUDED.features,updated_at=now()`, m.ChatID, m)
+		_, err := tx.Exec(ctx, `INSERT INTO chats(chat_id,title,features) VALUES($1,$2,$3) ON CONFLICT(chat_id) DO UPDATE SET title=COALESCE(NULLIF(EXCLUDED.title,''),chats.title),features=EXCLUDED.features,updated_at=now()`, m.ChatID, m.ChatTitle, m)
 		return err
 	}
 	ev := moderation.FromMembership(m, u.ID)
@@ -330,7 +341,7 @@ func (e *Engine) controlName(text string) string {
 		cmd = cmd[:i]
 	}
 	switch cmd {
-	case "/status", "/stats", "/case", "/feedback", "/tune", "/review", "/forget", "/attest", "/link", "/reports", "/reportcase", "/resolve", "/model", "/models", "/start", "/chats":
+	case "/status", "/stats", "/case", "/feedback", "/tune", "/review", "/forget", "/attest", "/link", "/reports", "/reportcase", "/resolve", "/model", "/models", "/modules", "/modulewords", "/modulelimit", "/start", "/chats":
 		return cmd
 	}
 	return ""
@@ -350,6 +361,12 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 	}
 	if cmd == "/start" || cmd == "/chats" {
 		return e.chatsCommand(ctx, tx, u)
+	}
+	if cmd == "/modules" {
+		return e.modulesCommand(ctx, tx, u, parts[1:])
+	}
+	if cmd == "/modulewords" || cmd == "/modulelimit" {
+		return e.moduleEditCommand(ctx, tx, u, cmd == "/modulewords", parts[1:])
 	}
 	if cmd == "/model" || cmd == "/models" {
 		return e.modelCommand(ctx, tx, u, parts[1:])
@@ -449,13 +466,13 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 				rows.Close()
 				return err
 			}
-			state := "unknown"
+			state := "статус неизвестен"
 			if flag == "true" {
-				state = "subscribed (нужен реальный update)"
+				state = "chat_member включён, ждём реального события"
 			} else if flag == "false" {
-				state = "unavailable: бот не admin"
+				state = "нет chat_member: бот не администратор"
 			}
-			capabilities += fmt.Sprintf("\nChat %d: chat_member=%s", cid, state)
+			capabilities += fmt.Sprintf("\n<code>%d</code> · %s", cid, state)
 		}
 		err = rows.Err()
 		rows.Close()
@@ -466,9 +483,13 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if err != nil {
 			return err
 		}
-		return e.ack(ctx, tx, *m, fmt.Sprintf("Observe-only. AI enabled=%t; model=%s; pending=%d; completed=%d; inbox=%d; reports pending=%d. История partial, удаления unknown. Правила %s. Последние наблюдаемые возможности:%s\n/model — выбор модели; /tune — инструкция настройки.", e.Config.AI.Enabled, setting.Model, pending, done, inbox, reports, e.Rules.Version, capabilities))
+		aiState := "включён"
+		if !e.Config.AI.Enabled {
+			aiState = "выключен; обязательные проверки ждут в очереди"
+		}
+		return e.ackHTML(ctx, tx, *m, notify.StatusHeading()+fmt.Sprintf("\nAI: %s\nМодель: <code>%s</code>\n\nПроверки: %d в очереди · %d завершено\nЖалобы: %d · события в очереди: %d\n\n<b>Получение событий</b>%s\n\n/model · модель AI\n/tune · правила <code>%s</code>", aiState, html.EscapeString(privacy.Redact(setting.Model)), pending, done, reports, inbox, capabilities, html.EscapeString(e.Rules.Version)))
 	case "/tune":
-		return e.ack(ctx, tx, *m, "Только чтение: измените YAML, increment moderation.ruleset_version, выполните sentinel validate, offline replay и review, затем restart. Автоматическое обучение/смена весов отключены.")
+		return e.ack(ctx, tx, *m, "/modules — настройки правил чата.")
 	case "/case":
 		if id == 0 {
 			return e.ack(ctx, tx, *m, "Используйте /case ID.")
@@ -481,7 +502,7 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if err = e.label(ctx, tx, id, *m.UserID, parts[2], fmt.Sprintf("command:%s:%d", e.BotID, u.ID), strings.Join(parts[3:], " ")); err != nil {
 			return err
 		}
-		return e.ack(ctx, tx, *m, "Обратная связь записана; санкции не применяются.")
+		return e.ack(ctx, tx, *m, "Метка сохранена.")
 	case "/review":
 		if id == 0 {
 			return e.ack(ctx, tx, *m, "/review ID")
@@ -498,9 +519,9 @@ func (e *Engine) command(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if err = e.enqueue(ctx, tx, c.Message, c.Assessment, true); err != nil {
 			return err
 		}
-		return e.ack(ctx, tx, *m, "Актуальная ревизия поставлена на AI-проверку (повторный готовый review не дублируется).")
+		return e.ack(ctx, tx, *m, "Проверка запрошена.")
 	case "/forget":
-		return e.ack(ctx, tx, *m, "Удаление выполняет оператор командой sentinel forget --chat ID --user ID. Активные доказательства и незавершённые обязательные jobs требуют отдельного рассмотрения; см. docs/privacy.md.")
+		return e.ack(ctx, tx, *m, "Удаление истории: sentinel forget --chat ID --user ID. Инструкция: docs/privacy.md.")
 	}
 	return nil
 }

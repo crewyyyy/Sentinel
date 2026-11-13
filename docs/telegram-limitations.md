@@ -1,24 +1,29 @@
-# Возможности и ручная проверка Telegram
+# Telegram: возможности и проверка
 
-Официальные источники: [Bot API](https://core.telegram.org/bots/api), [FAQ](https://core.telegram.org/bots/faq), [Recent Actions](https://core.telegram.org/api/recent-actions). Поля messages/entities/updates сверены при реализации; использован SDK `github.com/go-telegram/bot v1.27.0`. Официальная документация не заменяет проверку на вашей тестовой группе.
+[Bot API](https://core.telegram.org/bots/api), [FAQ](https://core.telegram.org/bots/faq), [Recent Actions](https://core.telegram.org/api/recent-actions). SDK: `github.com/go-telegram/bot v1.27.0`.
 
-- Подписка ровно на `message`, `edited_message`, `chat_member`, `my_chat_member`, `callback_query`.
-- Для всех обычных сообщений нужен корректный Privacy Mode/статус бота. Админский статус нужен для `chat_member`; явно не нужны права выдавать санкции.
-- У первого сообщения смысл **first observed since installation**, не новый аккаунт/первое за всю историю. История до подключения недоступна, coverage partial. После полной потери БД это знание теряется; восстановите backup, не заявляйте полное покрытие.
-- Бот не читает произвольные ЛС участников. В админских ЛС обрабатываются только поддержанные команды; сообщения других приватных диалогов не сохраняются.
-- Страна/IP/SIM-регион отсутствуют. `language_code` не геолокация и не фактор trust.
-- Sender_chat/анонимные сообщения не превращаются в фиктивного пользователя (`from` может быть совместимым fake sender от Telegram). Forward сохраняет тип, не выдуманную личность скрытого автора. Quote/caption/entities учитываются, UTF-16 не индексируется как bytes.
-- Для arbitrary `t.me/name` нет универсальной Bot API проверки username. Known bot objects/config → confirmed; suffix `bot`/start payload → heuristic; остальные → unverified. Наличие start payload само по себе не доказывает рекламу.
-- `/mute`, `/ban`, сообщения другого бота и скриншоты — не подтверждение. Боты могут не видеть сообщения других ботов; доверенный интеграционный канал в этом MVP не реализован.
-- Нет универсального deleted-message update для обычной группы. Недоступность permalink не доказывает удаление. Варны не имеют стандартного member-status.
-- `chat_member.from` — actor события; old→new используются вместе. При restrict сохраняются sending-state/until_date, не всякая смена ограничений — mute. Неоднозначная связь с кейсом остаётся unknown.
-- Ссылки строятся из стабильного supergroup ID `-100…`: `t.me/c/internal/message`, topic — `t.me/c/internal/thread/message`. Они требуют доступа к группе. Для обычной группы/невалидного ID кнопка не выдумывается. Public username links специально не используются.
-- Telegram хранит недоставленные updates ограниченное время (обычно не более 24 часов). Нельзя гарантировать восстановление никогда не полученных событий после долгого outage; durable guarantees начинаются с успешного ingest.
+- Подписка: `message`, `edited_message`, `chat_member`, `my_chat_member`, `callback_query`.
+- Для `chat_member` нужен статус администратора. Права restrict/delete не нужны.
+- Бот получает новые сообщения после подключения. Первое наблюдаемое сообщение учитывается по сохранённой истории; после потери БД восстановите backup.
+- ЛС участников, их страна, IP и SIM-регион недоступны. `language_code` означает язык интерфейса и не участвует в trust.
+- Анонимный автор, пересылка, quote и caption обрабатываются отдельно. Entities используют UTF-16 offsets.
+- Тип произвольного `t.me/name` обычно неизвестен. Объект User и настроенный список ботов дают подтверждение; суффикс `bot` и start payload используются как эвристики.
+- События модерации определяются по old/new состояниям `chat_member` и actor. Ручное подтверждение хранится как `admin_attested`; обычный текст `/mute` или `/ban` остаётся текстом.
+- Универсального события удаления сообщения и стандартного статуса warn в Bot API нет. Связь санкции с кейсом устанавливается отдельно.
+- Ссылки на супергруппы: `t.me/c/internal/message`, на темы: `t.me/c/internal/thread/message`. Получателю нужен доступ к группе. Для обычной группы такой ссылки нет.
+- Telegram хранит недоставленные updates обычно не более 24 часов. Сохранение в PostgreSQL начинается с успешного приёма update.
 
-## Перед production
+## Оформление карточек
 
-1. Создать тестовую группу, ограничить админ-чат, добавить бота без restrict/delete прав.
-2. Проверить обычное сообщение, caption + hidden text_link, edit, topic, sender_chat, reply report, реальное изменение member permissions.
-3. Проверить `/status`, карточку, неадминский/устаревший callback и отзыв прав админа.
-4. Каждый получатель ЛС сначала открывает диалог с ботом; закрытый admin destination остаётся обязательным fallback.
-5. Убедиться, что webhook пуст, работает только один poller, живы DB/health/metrics. Измерить фактическую задержку; целевые 5–15 секунд в этой среде не подтверждены.
+Custom emoji взяты из [Telegram iOS Icons](https://t.me/addemoji/tgiosicons). Текст использует HTML `tg-emoji`; кнопки — `icon_custom_emoji_id` и стили `primary`/`success`/`danger`.
+
+[Условия Telegram](https://core.telegram.org/bots/api#html-style): дополнительный username через Fragment либо Premium у владельца для поддерживаемых сообщений. При явном отказе emoji адаптер повторяет запрос без них и сохраняет этот режим до restart. Ошибки 429/5xx и сетевые сбои обрабатываются очередью доставки.
+
+Карточка содержит сообщение, риск/доверие, вывод AI и причины. Первые карточки, ответы AI и действия администратора доставляются сразу. `batch_window_seconds` объединяет только фоновые обновления.
+
+## Проверка перед запуском
+
+1. Создайте тестовую группу и закрытый админ-чат. Добавьте бота без restrict/delete прав; получатели ЛС должны открыть `/start`.
+2. Проверьте обычное сообщение, caption, скрытый text_link, edit, topic, sender_chat и reply-report.
+3. Измените права тестового участника и проверьте `chat_member`. Проверьте отказ неадмину, старой кнопке и администратору с отозванными правами.
+4. Проверьте `/status`, health, metrics, пустой webhook и единственный poller. Измерьте задержку доставки в своей группе.
