@@ -23,6 +23,8 @@ type HomeData struct {
 	PendingRequests                  int
 	PendingReviews, CompletedReviews int64
 	AIEnabled, AutoDiscover          bool
+	MediaEnabled                     bool
+	PendingMedia                     int64
 	Incomplete                       bool
 	Model, BotUsername               string
 }
@@ -74,12 +76,15 @@ func RenderHome(p HomePanel, d HomeData) (string, *models.InlineKeyboardMarkup) 
 			text += "\nМодель: <code>" + esc(privacy.Limit(d.Model, 80)) + "</code>"
 		}
 		text += fmt.Sprintf("\n\nПроверки: <b>%d</b> в очереди · %d завершено", d.PendingReviews, d.CompletedReviews)
+		if d.MediaEnabled {
+			text += fmt.Sprintf("\nМедиа NSFW: включено · <b>%d</b> в очереди", d.PendingMedia)
+		}
 		row(b("Обновить", "status", iconStats, "", 0), b("Модель AI", "model", iconAI, "", 0))
 		back()
 	case "connect":
 		text = heading(iconLink, "🔗", "Подключить чат")
 		if d.AutoDiscover {
-			text += "\nДобавьте бота администратором <b>без прав банить и удалять</b>.\n\nУведомите участников об обработке сообщений и внешнем AI. Затем подтвердите заявку в ЛС бота."
+			text += "\nДобавьте бота администратором <b>без прав банить и удалять</b>.\n\nУведомите участников об обработке текста и медиа внешним AI. Затем подтвердите заявку в ЛС бота."
 			if urlscan.ValidBotUsername(d.BotUsername) {
 				row(models.InlineKeyboardButton{Text: "Добавить в группу", URL: "https://t.me/" + d.BotUsername + "?startgroup=connect", IconCustomEmojiID: iconLink, Style: "success"})
 			}

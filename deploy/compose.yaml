@@ -27,12 +27,13 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_MODEL: ${AI_MODEL:-}
       AI_API_KEY: ${AI_API_KEY:-}
+      FAL_KEY: ${FAL_KEY:-}
       HEALTH_ADDR: 0.0.0.0:8080
     volumes:
       - ../configs/config.yaml:/app/configs/config.yaml:ro
     read_only: true
     tmpfs:
-      - /tmp:size=8M
+      - /tmp:size=64M
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped

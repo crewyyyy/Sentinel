@@ -42,7 +42,7 @@ func (e *Engine) controlPanelAllowed(p controlPanel) bool {
 // Only currently authorized chats contribute names or counters. A stale menu is
 // never a cached grant to reveal another chat's status after rights are revoked.
 func (e *Engine) homeData(ctx context.Context, owner int64, view string) (notify.HomeData, error) {
-	d := notify.HomeData{AIEnabled: e.Config.AI.Enabled, AutoDiscover: e.Config.Telegram.AutoDiscoverChats, BotUsername: e.Username}
+	d := notify.HomeData{AIEnabled: e.Config.AI.Enabled, MediaEnabled: e.Config.Media.Enabled, AutoDiscover: e.Config.Telegram.AutoDiscoverChats, BotUsername: e.Username}
 	if view == "help" {
 		return d, nil
 	}
@@ -85,6 +85,11 @@ func (e *Engine) homeData(ctx context.Context, owner int64, view string) (notify
 	}
 	if err = e.Store.Pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE status IN('pending','processing')),count(*) FILTER(WHERE status='done') FROM ai_jobs WHERE chat_id=ANY($1::bigint[])`, visible).Scan(&d.PendingReviews, &d.CompletedReviews); err != nil {
 		return d, err
+	}
+	if e.Config.Media.Enabled {
+		if err = e.Store.Pool.QueryRow(ctx, `SELECT count(*) FROM visual_requests WHERE status='pending' AND (chat_id=ANY($1::bigint[]) OR chat_id=$2)`, visible, owner).Scan(&d.PendingMedia); err != nil {
+			return d, err
+		}
 	}
 	model, err := storage.CurrentModel(ctx, e.Store.Pool, e.Config.AI.Model)
 	if err != nil {

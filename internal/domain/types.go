@@ -48,6 +48,8 @@ type Message struct {
 	QuoteEntities   []Entity   `json:"quote_entities,omitempty"`
 	ForwardType     string     `json:"forward_type,omitempty"`
 	ContentType     string     `json:"content_type"`
+	Media           []Media    `json:"media,omitempty"`
+	MediaPartial    bool       `json:"media_partial,omitempty"`
 	ContentHash     string     `json:"content_hash,omitempty"`
 	Date            time.Time  `json:"date"`
 	EditedAt        *time.Time `json:"edited_at,omitempty"`

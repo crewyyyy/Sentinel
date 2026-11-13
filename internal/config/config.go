@@ -29,6 +29,8 @@ type Config struct {
 	Moderation    Moderation    `yaml:"moderation"`
 	Trust         Trust         `yaml:"trust"`
 	AI            AI            `yaml:"ai"`
+	Media         Media         `yaml:"media"`
+	FalKey        string        `yaml:"-"`
 	Retention     Retention     `yaml:"retention"`
 	Links         Links         `yaml:"links"`
 	Notifications Notifications `yaml:"notifications"`
@@ -99,6 +101,7 @@ func Defaults() *Config {
 		Moderation:    Moderation{RulesetVersion: "v1", RiskAIThreshold: 45, AlertThreshold: 45, ScoreThresholds: []int{25, 45, 70, 85}, ReportAliases: []string{"/report", "!репорт", "!report"}, WatchMessageEdits: true},
 		Trust:         Trust{MaximumRiskDiscount: 20, AdminReplyBonusCap: 15, StatsWindowDays: 30},
 		AI:            AI{Enabled: true, Provider: "openai_compatible", TimeoutSeconds: 15, MaxConcurrent: 3, OptionalDailyRequestLimit: 200, MandatoryJobsBypassOptionalBudget: true, ReviewReportedMessages: true},
+		Media:         defaultMedia(),
 		Retention:     Retention{MaxRecentMessagesPerChat: 1000, MessagesDays: 7, IncidentDays: 30, AggregateDays: 90},
 		Links:         Links{AllowDomains: []string{"google.com", "youtube.com", "youtu.be", "tiktok.com", "github.com"}},
 		Notifications: Notifications{BatchWindowSeconds: 20, DuplicateCooldownSeconds: 300}, HealthAddr: "127.0.0.1:8080",
@@ -146,6 +149,7 @@ func LoadPolicy(path string) (*Config, error) {
 	validation.DatabaseURL = "offline"
 	validation.BotToken = "offline"
 	validation.AI.Enabled = false
+	validation.Media.Enabled = false
 	if err := validation.Validate(); err != nil {
 		return nil, err
 	}
@@ -160,6 +164,7 @@ func Load(path string) (*Config, error) {
 	c.DatabaseURL = os.Getenv("DATABASE_URL")
 	c.BotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
 	c.AIKey = os.Getenv("AI_API_KEY")
+	c.FalKey = os.Getenv("FAL_KEY")
 	c.AIBaseURL = os.Getenv("AI_BASE_URL")
 	c.WebhookSecret = os.Getenv("WEBHOOK_SECRET")
 	if v := os.Getenv("HEALTH_ADDR"); v != "" {
@@ -174,6 +179,9 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 func (c *Config) Validate() error {
+	if err := c.validateMedia(); err != nil {
+		return err
+	}
 	if c.Telegram.Mode != ModePolling {
 		return fmt.Errorf("telegram.mode: only polling is implemented; webhook unavailable")
 	}

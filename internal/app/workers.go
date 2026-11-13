@@ -78,6 +78,7 @@ func (e *Engine) ReviewOne(ctx context.Context, p review.Provider) (bool, error)
 }
 
 type Notifier interface {
+	Reply(context.Context, int64, int64, string, *models.InlineKeyboardMarkup) (int64, error)
 	PrivateDestination(context.Context, int64) (bool, error)
 	Send(context.Context, int64, string, *models.InlineKeyboardMarkup) (int64, error)
 	Edit(context.Context, int64, int64, string, *models.InlineKeyboardMarkup) error
@@ -143,6 +144,16 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 				_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='done',lease_until=NULL,last_error='recipient_not_authorized',result='{"delivery":"unavailable"}' WHERE id=$1 AND lease_token=$2`, id, token)
 				return true, err
 			}
+		}
+	}
+	if kind == "media_result" && d.MediaRequestID > 0 {
+		var current bool
+		if err = e.Store.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM visual_requests r WHERE r.id=$1 AND r.chat_id=$2 AND r.message_id=$3 AND NOT EXISTS(SELECT 1 FROM visual_requests newer WHERE newer.chat_id=r.chat_id AND newer.message_id=r.message_id AND newer.id>r.id))`, d.MediaRequestID, d.ChatID, d.ReplyToMessageID).Scan(&current); err != nil {
+			return retryBeforeSend("media_request_unavailable", 10*time.Second)
+		}
+		if !current || !e.Config.Media.Enabled || !e.Config.Media.PrivateReplies {
+			_, err = e.Store.Pool.Exec(ctx, `UPDATE outbox SET status='done',lease_until=NULL,last_error='media_request_stale' WHERE id=$1 AND lease_token=$2`, id, token)
+			return true, err
 		}
 	}
 	text := d.Text
@@ -328,6 +339,8 @@ func (e *Engine) DeliverOne(ctx context.Context, n Notifier) (bool, error) {
 				msgID, err = n.Send(requestCtx, d.ChatID, "Обновление статуса (предыдущая карточка недоступна):\n"+text, kb)
 			}
 		}
+	} else if d.ReplyToMessageID > 0 {
+		msgID, err = n.Reply(requestCtx, d.ChatID, d.ReplyToMessageID, text, kb)
 	} else if banner {
 		msgID, err = n.SendBanner(requestCtx, d.ChatID, text, kb)
 	} else {
@@ -405,6 +418,12 @@ func (e *Engine) Cleanup(ctx context.Context) error {
 		{`DELETE FROM outbox WHERE kind='model_panel' AND (payload->>'model_panel_id')::bigint IN(SELECT id FROM model_panels WHERE expires_at<now()) AND status<>'processing'`, nil},
 		{`DELETE FROM model_panels WHERE expires_at<now() AND NOT EXISTS(SELECT 1 FROM outbox WHERE kind='model_panel' AND (payload->>'model_panel_id')::bigint=model_panels.id AND status='processing')`, nil},
 		{`DELETE FROM model_change_events WHERE created_at<now()-interval '90 days'`, nil},
+		{`UPDATE visual_requests SET status='done',payload='{}' WHERE status='pending' AND created_at<now()-$1::interval`, []any{fmt.Sprintf("%d days", e.Config.Retention.MessagesDays)}},
+		{`DELETE FROM visual_checks c WHERE (status='pending' OR status='processing' AND lease_until<now()) AND NOT EXISTS(SELECT 1 FROM visual_requests r WHERE r.status='pending' AND c.cache_key=ANY(r.check_keys))`, nil},
+		{`DELETE FROM visual_requests WHERE status='done' AND created_at<now()-interval '7 days'`, nil},
+		{`DELETE FROM visual_checks c WHERE status='done' AND expires_at<now() AND NOT EXISTS(SELECT 1 FROM visual_requests r WHERE r.status='pending' AND c.cache_key=ANY(r.check_keys))`, nil},
+		{`DELETE FROM visual_frame_cache WHERE expires_at<now()`, nil},
+		{`DELETE FROM visual_budget WHERE day<(now() AT TIME ZONE 'UTC')::date-7`, nil},
 		{`DELETE FROM outbox WHERE kind='control_panel' AND (payload->>'home_panel_id')::bigint IN(SELECT id FROM control_panels WHERE expires_at<now()) AND status<>'processing'`, nil},
 		{`DELETE FROM control_panels WHERE expires_at<now() AND NOT EXISTS(SELECT 1 FROM outbox WHERE kind='control_panel' AND (payload->>'home_panel_id')::bigint=control_panels.id AND status='processing')`, nil},
 		{`DELETE FROM outbox WHERE kind='module_panel' AND (payload->>'module_panel_id')::bigint IN(SELECT id FROM module_panels WHERE expires_at<now()) AND status<>'processing'`, nil},

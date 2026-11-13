@@ -29,7 +29,7 @@ Sentinel помогает модераторам разбирать сообще
 Нужны Docker Engine и Compose v2. Для разработки: Go 1.27.3 (минимум 1.26), PostgreSQL 17.
 
 ```bash
-git clone https://github.com/crewyyyy/Sentinel.git sentinel
+git clone https://github.com/crewyyyy/sentinel.git sentinel
 cd sentinel
 cp deploy/.env.example deploy/.env
 chmod 600 deploy/.env
@@ -96,6 +96,16 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml exec sentinel senti
 | `/link CASE_ID EVENT_DB_ID` | Связать кейс с событием из `moderation_events` |
 | `/tune`, `/forget` | Настройки и инструкция удаления данных |
 
+## Фото, GIF и стикеры
+
+Включите `media.enabled: true` в YAML и задайте `FAL_KEY` в `deploy/.env`. Модель `fal-ai/imageutils/nsfw` проверяет фото, GIF, стикеры и кастомные Premium emoji отдельно от текстового AI.
+
+В личке отправьте медиа с аккаунта из `allowed_admin_ids`: бот ответит на него коротким реплаем с оценкой NSFW. Низкая оценка отмечается ✅, неоднозначная 🟡, высокая 🔞. В подключённых группах подозрительный результат попадает в приватную карточку кейса.
+
+Одинаковый стикер использует сохранённый результат до 30 дней, в том числе после перезапуска. Второй кэш распознаёт одинаковые кадры под разными file IDs. По умолчанию доступно 200 запросов к модели в сутки; кадры расходуют лимит отдельно. При исчерпании лимита новые проверки ждут, а кэш продолжает работать.
+
+GIF и видеостикеры проверяются по выборке до трёх кадров. Для TGS-анимации проверяется только Telegram-превью, что указано в ответе. Это не проверка всех кадров. При включении уведомите участников о передаче изображений в fal.ai. [Настройка, ограничения и откат](docs/media-moderation.md).
+
 ## AI и хранение
 
 `/model` сохраняет выбор для всех чатов; нужны права администратора во всех них. Поиск: `/model luna`. Изменение действует на новые попытки, включая повторы. [Модели и доступ к каталогу](docs/runtime-models.md).
@@ -128,7 +138,7 @@ docker stop sentinel-test-db
 docker rm sentinel-test-db
 ```
 
-Тесты используют fake Telegram/AI. CI запускает PostgreSQL, race, vet и сборку образа. Для запуска без Docker задайте `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `AI_*` в окружении и выполните `make run`: приложение само `.env` не читает. Не включайте shell tracing с секретами.
+Тесты используют fake Telegram/AI. Для проверки декодирования медиа установите `ffmpeg` (`sudo apt-get install ffmpeg`); без него эти тесты пропускаются. В Docker и CI он установлен. CI запускает PostgreSQL, race, vet и сборку образа. Для запуска без Docker задайте `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `AI_*` в окружении и выполните `make run`: приложение само `.env` не читает. Не включайте shell tracing с секретами.
 
 ## Документация
 

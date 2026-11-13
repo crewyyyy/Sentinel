@@ -17,6 +17,7 @@ import (
 	"sentinel/internal/review"
 	"sentinel/internal/storage"
 	"sentinel/internal/telegram"
+	"sentinel/internal/visual"
 )
 
 func (e *Engine) Prepare(ctx context.Context, u domain.Update) (domain.Update, error) {
@@ -34,7 +35,8 @@ func (e *Engine) Prepare(ctx context.Context, u domain.Update) (domain.Update, e
 				}
 			}
 		}
-		if ignored || !active && (!e.isAdminDestination(m.ChatID) || e.controlName(m.Content()) == "") {
+		privateMedia := e.privateMedia(*m)
+		if ignored || !active && !privateMedia && (!e.isAdminDestination(m.ChatID) || e.controlName(m.Content()) == "") {
 			u.Message = nil
 		} else {
 			m.ContentHash = ""
@@ -46,6 +48,18 @@ func (e *Engine) Prepare(ctx context.Context, u domain.Update) (domain.Update, e
 				*m.Reply = e.Scanner.Extract(*m.Reply)
 			}
 			safe := privacy.Message(*m)
+			if privateMedia && e.controlName(m.Content()) == "" {
+				safe.Text = ""
+				safe.Caption = ""
+				safe.QuoteText = ""
+				safe.Reply = nil
+				safe.Entities = nil
+				safe.CaptionEntities = nil
+				safe.QuoteEntities = nil
+				safe.URLs = nil
+				safe.Mentions = nil
+				safe.Username = ""
+			}
 			u.Message = &safe
 		}
 	}
@@ -252,6 +266,14 @@ func Run(ctx context.Context, c *config.Config) error {
 		wg.Add(1)
 		go worker(child, "ai", func(ctx context.Context) (bool, error) { return e.ReviewOne(ctx, provider) }, &wg)
 	}
+	if c.Media.Enabled {
+		mediaSource := &telegram.MediaSource{Bot: sender.Bot}
+		mediaProvider := &visual.Fal{Key: c.FalKey, Client: &http.Client{Timeout: time.Duration(c.Media.TimeoutSeconds) * time.Second}}
+		wg.Add(1)
+		go worker(child, "media", func(ctx context.Context) (bool, error) {
+			return e.MediaOne(ctx, mediaSource, visual.FFmpeg{}, mediaProvider)
+		}, &wg)
+	}
 	wg.Add(1)
 	go worker(child, "outbox", func(ctx context.Context) (bool, error) { return e.DeliverOne(ctx, sender) }, &wg)
 	wg.Add(1)
@@ -310,6 +332,10 @@ func (e *Engine) HealthHandler() http.Handler {
 			n    int64
 		}{{"sentinel_messages_total", messages}, {"sentinel_ai_jobs_pending", pending}, {"sentinel_ai_jobs_succeeded_retained", done}, {"sentinel_reports_retained", reports}, {"sentinel_confirmed_actions_retained", events}, {"sentinel_alerts_retained", alerts}, {"sentinel_inbox_pending", inbox}} {
 			fmt.Fprintf(w, "%s %d\n", p.name, p.n)
+		}
+		var mediaPending, mediaCalls int64
+		if err = e.Store.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM visual_requests WHERE status='pending'),COALESCE((SELECT requests FROM visual_budget WHERE day=(now() AT TIME ZONE 'UTC')::date),0)`).Scan(&mediaPending, &mediaCalls); err == nil {
+			fmt.Fprintf(w, "sentinel_media_requests_pending %d\nsentinel_media_calls_reserved_today %d\n", mediaPending, mediaCalls)
 		}
 		rows, err := e.Store.Pool.Query(ctx, `SELECT name,value FROM runtime_metrics ORDER BY name`)
 		if err != nil {

@@ -351,6 +351,9 @@ func (n *notifierFake) EditCaption(ctx context.Context, chat, message int64, tex
 	n.captionEdits++
 	return n.Edit(ctx, chat, message, text, kb)
 }
+func (n *notifierFake) Reply(ctx context.Context, chat, message int64, text string, kb *models.InlineKeyboardMarkup) (int64, error) {
+	return n.Send(ctx, chat, text, kb)
+}
 func (n *notifierFake) AnswerCallback(context.Context, string, string) error { return nil }
 func TestFullFlowRetriesOutboxAndPrivacy(t *testing.T) {
 	e := testEngine(t)

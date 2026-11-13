@@ -59,10 +59,19 @@ func NewSender(token string) (*Sender, error) {
 	return &Sender{Bot: b}, nil
 }
 func (s *Sender) Send(ctx context.Context, chatID int64, text string, kb *models.InlineKeyboardMarkup) (int64, error) {
+	return s.send(ctx, chatID, 0, text, kb)
+}
+func (s *Sender) Reply(ctx context.Context, chatID, messageID int64, text string, kb *models.InlineKeyboardMarkup) (int64, error) {
+	return s.send(ctx, chatID, messageID, text, kb)
+}
+func (s *Sender) send(ctx context.Context, chatID, reply int64, text string, kb *models.InlineKeyboardMarkup) (int64, error) {
 	if s.emojiUnavailable.Load() {
 		text, kb = withoutCustomEmoji(text, kb)
 	}
 	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML, LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: boolPtr(true)}}
+	if reply > 0 {
+		params.ReplyParameters = &models.ReplyParameters{MessageID: int(reply), AllowSendingWithoutReply: true}
+	}
 	// A typed nil in ReplyMarkup's interface serializes as JSON null, not an omitted field.
 	if kb != nil {
 		params.ReplyMarkup = kb

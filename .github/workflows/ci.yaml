@@ -23,6 +23,7 @@ jobs:
         with:
           go-version: '1.27.3'
           cache: true
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: go mod download
       - run: test -z "$(gofmt -l cmd internal migrations prompts)"
       - run: go vet ./...

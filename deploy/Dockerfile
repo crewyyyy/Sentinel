@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /sentinel ./cmd/sentinel
 
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates && addgroup -S sentinel && adduser -S -G sentinel -u 10001 sentinel
+RUN apk add --no-cache ca-certificates ffmpeg && addgroup -S sentinel && adduser -S -G sentinel -u 10001 sentinel
 COPY --from=build /sentinel /usr/local/bin/sentinel
 WORKDIR /app
 USER sentinel

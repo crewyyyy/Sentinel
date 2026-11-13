@@ -21,6 +21,8 @@ func jobMessage(m domain.Message, textLimit, urlLimit int) domain.Message {
 	}
 	m.Text = privacy.Limit(m.Text, textLimit)
 	m.Caption = privacy.Limit(m.Caption, textLimit)
+	m.Media = nil
+	m.MediaPartial = false
 	m.Entities = nil
 	m.CaptionEntities = nil
 	m.URLs = boundedURLs(m.URLs, urlLimit)

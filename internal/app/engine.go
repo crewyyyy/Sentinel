@@ -128,6 +128,9 @@ func (e *Engine) process(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		}
 	}
 	if m := u.Message; m != nil {
+		if e.privateMedia(*m) && e.controlName(m.Content()) == "" {
+			return e.enqueueVisual(ctx, tx, *m)
+		}
 		if e.isAdminDestination(m.ChatID) {
 			return e.command(ctx, tx, u)
 		}
@@ -159,6 +162,9 @@ func (e *Engine) process(ctx context.Context, tx pgx.Tx, u domain.Update) error 
 		if err != nil {
 			return err
 		}
+		if err = e.enqueueVisual(ctx, tx, saved); err != nil {
+			return err
+		}
 		if alias, reason := e.reportCommand(saved.Content()); alias != "" {
 			return e.report(ctx, tx, saved, reason)
 		}
@@ -187,6 +193,16 @@ func fingerprint(m domain.Message) string {
 		Forwarded, Quoted                        bool
 	}{m.Text, m.Caption, m.QuoteText, m.ForwardType, entities(m.Entities), entities(m.CaptionEntities), entities(m.QuoteEntities), m.ReplyID, m.Forwarded, m.Quoted}
 	b, _ := json.Marshal(x)
+	if len(m.Media) > 0 {
+		keys := make([]string, 0, len(m.Media))
+		for _, media := range m.Media {
+			keys = append(keys, storage.VisualKey(media))
+		}
+		b, _ = json.Marshal(struct {
+			Content json.RawMessage
+			Media   []string
+		}{b, keys})
+	}
 	sum := sha256.Sum256(b)
 	return fmt.Sprintf("%x", sum)
 }
@@ -498,6 +514,7 @@ func (e *Engine) incident(ctx context.Context, tx pgx.Tx, m domain.Message, a do
 	if c.Message.ID == 0 || c.Message.ID == m.ID && m.Version >= c.Message.Version || m.ID > c.Message.ID {
 		if c.Message.ID != m.ID || c.Message.Version != m.Version {
 			c.AI = nil
+			c.Visual = nil
 		}
 		c.Message = m
 		c.Assessment = a
@@ -526,6 +543,17 @@ func (e *Engine) incident(ctx context.Context, tx pgx.Tx, m domain.Message, a do
 	}
 	if c.AI != nil {
 		c.AIState = "done"
+	}
+	if c.Visual == nil {
+		var visualResult []byte
+		lookupErr := tx.QueryRow(ctx, `SELECT result FROM visual_requests WHERE chat_id=$1 AND message_id=$2 AND edit_key=$3 AND result IS NOT NULL`, c.Message.ChatID, c.Message.ID, c.Message.ContentHash).Scan(&visualResult)
+		if lookupErr == nil {
+			if err = json.Unmarshal(visualResult, &c.Visual); err != nil {
+				return 0, err
+			}
+		} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return 0, lookupErr
+		}
 	}
 	if c.Status == "" {
 		c.Status = "open"

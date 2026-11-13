@@ -18,6 +18,7 @@ type Card struct {
 	Assessment domain.Assessment        `json:"assessment"`
 	AI         *domain.ReviewResponse   `json:"ai,omitempty"`
 	AIState    string                   `json:"ai_state"`
+	Visual     *domain.MediaReview      `json:"visual,omitempty"`
 	Reports    int                      `json:"reports"`
 	Reporters  []int64                  `json:"reporter_ids,omitempty"`
 	Label      string                   `json:"label"`
@@ -47,6 +48,15 @@ func Render(c Card) (string, *models.InlineKeyboardMarkup) {
 	content := c.Message.Content()
 	if content == "" {
 		content = "Текст сообщения недоступен"
+		names := map[string]string{"photo": "Фото", "sticker": "Стикер", "animation": "GIF", "custom_emoji": "Кастомный emoji", "document": "Документ"}
+		if name := names[c.Message.ContentType]; name != "" {
+			content = name
+		}
+		if len(c.Message.Media) > 0 {
+			if name := names[c.Message.Media[0].Kind]; name != "" {
+				content = name
+			}
+		}
 	}
 	text += "<blockquote>" + esc(privacy.Limit(content, 240)) + "</blockquote>\n"
 	if c.Message.Partial {
@@ -65,6 +75,9 @@ func Render(c Card) (string, *models.InlineKeyboardMarkup) {
 			text += esc(privacy.Limit(explanation, 220)) + "\n"
 		}
 		text += "Совет AI: " + esc(recommendationName(c.AI.Result.Recommendation)) + ".\n"
+	}
+	if c.Visual != nil {
+		text += "\n" + RenderMedia(*c.Visual) + "\n"
 	}
 	if len(c.Assessment.Signals) > 0 {
 		reasons := []string{}
@@ -193,15 +206,17 @@ func signalName(code string) string {
 }
 
 type Delivery struct {
-	HomePanelID   int64  `json:"home_panel_id,omitempty"`
-	ConnectionID  int64  `json:"connection_id,omitempty"`
-	ModelPanelID  int64  `json:"model_panel_id,omitempty"`
-	ModulePanelID int64  `json:"module_panel_id,omitempty"`
-	OperatorOnly  bool   `json:"operator_only,omitempty"`
-	Private       bool   `json:"private"`
-	OriginChatID  int64  `json:"origin_chat_id,omitempty"`
-	IncidentID    int64  `json:"incident_id"`
-	ChatID        int64  `json:"chat_id"`
-	Text          string `json:"text,omitempty"`
-	Fallback      bool   `json:"fallback,omitempty"`
+	HomePanelID      int64  `json:"home_panel_id,omitempty"`
+	ConnectionID     int64  `json:"connection_id,omitempty"`
+	ModelPanelID     int64  `json:"model_panel_id,omitempty"`
+	ModulePanelID    int64  `json:"module_panel_id,omitempty"`
+	OperatorOnly     bool   `json:"operator_only,omitempty"`
+	Private          bool   `json:"private"`
+	OriginChatID     int64  `json:"origin_chat_id,omitempty"`
+	IncidentID       int64  `json:"incident_id"`
+	ChatID           int64  `json:"chat_id"`
+	Text             string `json:"text,omitempty"`
+	Fallback         bool   `json:"fallback,omitempty"`
+	ReplyToMessageID int64  `json:"reply_to_message_id,omitempty"`
+	MediaRequestID   int64  `json:"media_request_id,omitempty"`
 }

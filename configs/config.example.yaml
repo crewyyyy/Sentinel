@@ -59,6 +59,18 @@ ai:
   # Zero prices or absent usage means cost unknown, not free.
   input_price_per_million: 0
   output_price_per_million: 0
+# Optional NSFW media checks via fal-ai/imageutils/nsfw; requires FAL_KEY and ffmpeg.
+media:
+  enabled: false
+  # Private replies are restricted to allowed_admin_ids, independently of admin-message ignore.
+  private_replies: true
+  cache_days: 30
+  # Fal calls (frames), not messages. Zero pauses uncached checks; text MUST jobs are unaffected.
+  daily_request_limit: 200
+  review_threshold: 0.35
+  nsfw_threshold: 0.75
+  max_file_bytes: 10485760
+  timeout_seconds: 30
 retention:
   max_recent_messages_per_chat: 1000
   messages_days: 7

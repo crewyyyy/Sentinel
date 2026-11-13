@@ -8,7 +8,7 @@ import (
 )
 
 func TestRedaction(t *testing.T) {
-	for _, s := range []string{"api_key=supersecret123", "password: secret123", "https://example.org?access_token=abcdsecret&ref=1", "sk-testsecretkey1234", "123456789:abcdefghijklmnopqrstuvwxy", "Authorization: Bearer secretkey12345", "email@example.org", "+12345678901"} {
+	for _, s := range []string{"fal_sk_fixturevalue:fixturesecret", "00000000-0000-0000-0000-000000000000:11111111-1111-1111-1111-111111111111", "api_key=supersecret123", "password: secret123", "https://example.org?access_token=abcdsecret&ref=1", "sk-testsecretkey1234", "123456789:abcdefghijklmnopqrstuvwxy", "Authorization: Bearer secretkey12345", "email@example.org", "+12345678901"} {
 		got := Redact(s)
 		if got == s || strings.Contains(got, "supersecret123") || strings.Contains(got, "abcdsecret") || strings.Contains(got, "secretkey12345") {
 			t.Fatalf("not redacted: %s", got)

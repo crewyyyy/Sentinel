@@ -22,7 +22,7 @@ func TestHomeIsCompactAndInstructionsAreOnDemand(t *testing.T) {
 		}
 	}
 	connect, connectKB := RenderHome(HomePanel{ID: 1, Revision: 2, View: "connect"}, data)
-	if !strings.Contains(connect, "внешнем AI") || !strings.Contains(connect, "подтвердите заявку") || !strings.Contains(connectKB.InlineKeyboard[0][0].URL, "?startgroup=connect") {
+	if !strings.Contains(connect, "текста и медиа внешним AI") || !strings.Contains(connect, "подтвердите заявку") || !strings.Contains(connectKB.InlineKeyboard[0][0].URL, "?startgroup=connect") {
 		t.Fatal("connection guide lost consent or usable group link")
 	}
 	data.PendingRequests = 2
@@ -55,7 +55,7 @@ func TestHomeViewsAreEscapedAndButtonsBounded(t *testing.T) {
 }
 
 func TestHomeViewsFitPhotoCaption(t *testing.T) {
-	data := HomeData{PendingRequests: 20, PendingReviews: 9223372036854775807, CompletedReviews: 9223372036854775807, AIEnabled: true, AutoDiscover: true, Incomplete: true, Model: strings.Repeat("m", 160), BotUsername: "fixture_bot"}
+	data := HomeData{PendingRequests: 20, PendingReviews: 9223372036854775807, CompletedReviews: 9223372036854775807, AIEnabled: true, MediaEnabled: true, PendingMedia: 9223372036854775807, AutoDiscover: true, Incomplete: true, Model: strings.Repeat("m", 160), BotUsername: "fixture_bot"}
 	for i := 0; i < 20; i++ {
 		data.ChatTitles = append(data.ChatTitles, strings.Repeat("🛡<&", 100))
 	}

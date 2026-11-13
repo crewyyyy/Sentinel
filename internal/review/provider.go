@@ -145,6 +145,8 @@ func (p *Compatible) Review(ctx context.Context, r domain.ReviewRequest) (domain
 			m.UserID = &id
 		}
 		m.SenderChatID = nil
+		m.Media = nil
+		m.MediaPartial = false
 		m.ContentHash = ""
 		if m.Reply != nil {
 			reply := scrub(*m.Reply)

@@ -186,6 +186,7 @@ func (e *Engine) Forget(ctx context.Context, chat, user int64) error {
 		return fmt.Errorf("retained case or pending job exists: operator review required, mandatory evidence was not deleted")
 	}
 	queries := []string{
+		`DELETE FROM visual_requests WHERE chat_id=$1 AND ((payload->>'user_id')::bigint=$2 OR message_id IN(SELECT message_id FROM message_keys WHERE chat_id=$1 AND user_id=$2))`,
 		`DELETE FROM ai_reviews WHERE job_id IN(SELECT id FROM ai_jobs WHERE chat_id=$1 AND (payload->'message'->>'user_id')::bigint=$2)`,
 		`DELETE FROM ai_jobs WHERE chat_id=$1 AND (payload->'message'->>'user_id')::bigint=$2`,
 		`DELETE FROM risk_assessments WHERE chat_id=$1 AND message_id IN(SELECT message_id FROM message_keys WHERE chat_id=$1 AND user_id=$2)`,

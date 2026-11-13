@@ -25,11 +25,12 @@ type chat struct {
 	Username string `json:"username"`
 }
 type entity struct {
-	Type   string `json:"type"`
-	Offset int    `json:"offset"`
-	Length int    `json:"length"`
-	URL    string `json:"url"`
-	User   *user  `json:"user"`
+	Type          string `json:"type"`
+	Offset        int    `json:"offset"`
+	Length        int    `json:"length"`
+	URL           string `json:"url"`
+	User          *user  `json:"user"`
+	CustomEmojiID string `json:"custom_emoji_id"`
 }
 type message struct {
 	ID              int64           `json:"message_id"`
@@ -187,6 +188,9 @@ func normalizeMessage(m *message, depth int) domain.Message {
 		x.ContentType = "audio"
 	case len(m.Animation) > 0:
 		x.ContentType = "animation"
+	}
+	if depth == 0 {
+		x.Media, x.MediaPartial = extractMedia(m)
 	}
 	return x
 }

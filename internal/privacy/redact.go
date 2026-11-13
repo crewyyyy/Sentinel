@@ -9,7 +9,7 @@ import (
 )
 
 var credentials = regexp.MustCompile(`(?i)(\b(?:api[_ -]?key|token|password|passwd|secret|authorization|access_token|api_token)\b[\s"':=]+)([^\s"'&,;}]+)`)
-var keys = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{8,}|[0-9]{6,12}:[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9_.-]{8,})`)
+var keys = regexp.MustCompile(`(?i)\b(?:fal_sk_[A-Za-z0-9_-]+:[A-Za-z0-9_-]+|[A-Za-z0-9_-]{24,}:[A-Za-z0-9_-]{24,}|sk-[A-Za-z0-9_-]{8,}|[0-9]{6,12}:[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9_.-]{8,})`)
 var contact = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|\+\d[\d ()-]{8,}\d`)
 
 func Redact(s string) string {
