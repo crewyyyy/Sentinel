@@ -94,7 +94,7 @@ func (s *Store) FinishVisual(ctx context.Context, j *VisualJob, result domain.Me
 	if result.Unavailable {
 		ttl = "15 minutes"
 	}
-	tag, err := s.Pool.Exec(ctx, `UPDATE visual_checks SET status='done',media='{}',result=$3,expires_at=now()+$4::interval,lease_until=NULL,updated_at=now() WHERE cache_key=$1 AND lease_token=$2 AND status='processing'`, j.Key, j.Token, result, ttl)
+	tag, err := s.Pool.Exec(ctx, `UPDATE visual_checks SET status='done',media='{}',result=$3,last_error=$5,expires_at=now()+$4::interval,lease_until=NULL,updated_at=now() WHERE cache_key=$1 AND lease_token=$2 AND status='processing'`, j.Key, j.Token, result, ttl, result.ErrorCode)
 	if err == nil && tag.RowsAffected() != 1 {
 		return fmt.Errorf("visual lease lost")
 	}

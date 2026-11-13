@@ -45,7 +45,7 @@ func (e *Engine) deferVisualNotice(ctx context.Context, key string) error {
 	}
 	for _, n := range notices {
 		if e.privateMedia(n.m) {
-			if err = e.text(ctx, tx, fmt.Sprintf("media-deferred:%d", n.id), notify.Delivery{ChatID: n.m.ChatID, Private: true, OperatorOnly: true, ReplyToMessageID: n.m.ID, MediaRequestID: n.id, Text: "⏳ <b>Проверка в очереди</b>\nДневной лимит исчерпан. Продолжу после 00:00 UTC."}, "media_result", ""); err != nil {
+			if err = e.text(ctx, tx, fmt.Sprintf("media-deferred:%d", n.id), notify.Delivery{ChatID: n.m.ChatID, Private: true, OperatorOnly: true, ReplyToMessageID: n.m.ID, MediaRequestID: n.id, Text: notify.MediaPending()}, "media_result", ""); err != nil {
 				return err
 			}
 		}

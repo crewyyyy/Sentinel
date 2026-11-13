@@ -21,5 +21,6 @@ type MediaReview struct {
 	Preview     bool    `json:"preview,omitempty"`
 	Partial     bool    `json:"partial,omitempty"`
 	Unavailable bool    `json:"unavailable,omitempty"`
+	ErrorCode   string  `json:"error_code,omitempty"`
 	Model       string  `json:"model"`
 }

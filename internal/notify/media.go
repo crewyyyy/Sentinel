@@ -9,16 +9,16 @@ import (
 
 func RenderMedia(r domain.MediaReview) string {
 	if r.Unavailable && r.Frames == 0 {
-		return "⚪ <b>Не удалось проверить медиа</b>"
+		return heading(iconClose, "⚪", "Не удалось проверить медиа")
 	}
-	heading := "✅ <b>Низкий риск NSFW</b>"
+	title := heading(iconCheck, "✅", "Низкий риск NSFW")
 	if r.Verdict == "nsfw" {
-		heading = "🔞 <b>Высокий риск NSFW</b>"
+		title = heading(iconClose, "🔞", "Высокий риск NSFW")
 	} else if r.Verdict != "safe" || r.Partial {
-		heading = "🟡 <b>Нужна проверка</b>"
+		title = heading(iconSearch, "🟡", "Нужна проверка")
 	}
 	score := strings.ReplaceAll(fmt.Sprintf("%.1f", r.Probability*100), ".", ",")
-	text := heading + "\nNSFW: <code>" + score + "%</code>"
+	text := title + "\nNSFW: <code>" + score + "%</code>"
 	if r.Preview {
 		text += "\n<i>Проверено превью</i>"
 	} else if r.Frames > 1 {
@@ -28,4 +28,12 @@ func RenderMedia(r domain.MediaReview) string {
 		text += "\n<i>Часть медиа не проверена</i>"
 	}
 	return text
+}
+
+func MediaPending() string {
+	return heading(iconAI, "⏳", "Проверка в очереди") + "\nДневной лимит исчерпан. Продолжу после 00:00 UTC."
+}
+
+func MediaRateLimited() string {
+	return heading(iconAI, "⏳", "Слишком много медиа") + "\nПовторите проверку через минуту."
 }

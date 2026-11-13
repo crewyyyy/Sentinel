@@ -51,7 +51,7 @@ func (e *Engine) enqueueVisual(ctx context.Context, tx pgx.Tx, m domain.Message)
 	}
 	if recent >= mediaRequestsPerMinute || pending >= mediaPendingPerChat {
 		if m.ChatID > 0 {
-			return e.text(ctx, tx, fmt.Sprintf("media-limit:%d:%s", m.ChatID, time.Now().UTC().Format("200601021504")), notify.Delivery{ChatID: m.ChatID, Private: true, OperatorOnly: true, ReplyToMessageID: m.ID, Text: "⏳ <b>Слишком много медиа</b>\nПовторите проверку через минуту."}, "media_result", "")
+			return e.text(ctx, tx, fmt.Sprintf("media-limit:%d:%s", m.ChatID, time.Now().UTC().Format("200601021504")), notify.Delivery{ChatID: m.ChatID, Private: true, OperatorOnly: true, ReplyToMessageID: m.ID, Text: notify.MediaRateLimited()}, "media_result", "")
 		}
 		return storage.Metric(ctx, tx, "sentinel_media_rate_limited_total", 1)
 	}
@@ -101,7 +101,7 @@ func (e *Engine) MediaOne(ctx context.Context, source MediaSource, renderer visu
 			delay = max(delay, failure.RetryAfter)
 		}
 		if failure != nil && failure.Permanent || job.Attempts >= mediaMaxAttempts {
-			return true, e.Store.FinishVisual(ctx, job, domain.MediaReview{Unavailable: true, Model: visual.Model}, e.Config.Media.CacheDays)
+			return true, e.Store.FinishVisual(ctx, job, domain.MediaReview{Unavailable: true, ErrorCode: code, Model: visual.Model}, e.Config.Media.CacheDays)
 		}
 		return true, e.Store.RetryVisual(ctx, job, code, delay)
 	}

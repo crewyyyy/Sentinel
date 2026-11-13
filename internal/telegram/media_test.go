@@ -155,8 +155,8 @@ func TestCustomEmojiDownloadAndReply(t *testing.T) {
 			if err := json.Unmarshal([]byte(r.FormValue("reply_parameters")), &reply); err != nil || reply.ID != 55 {
 				t.Error("response is not a reply", err)
 			}
-			if r.FormValue("parse_mode") != "HTML" {
-				t.Error("HTML formatting missing")
+			if r.FormValue("parse_mode") != "HTML" || !strings.HasPrefix(r.FormValue("text"), `<tg-emoji emoji-id="5774022692642492953">`) {
+				t.Error("Premium HTML formatting missing from reply")
 			}
 			fmt.Fprint(w, `{"ok":true,"result":{"message_id":77,"date":1,"chat":{"id":111,"type":"private"}}}`)
 		default:
@@ -177,7 +177,7 @@ func TestCustomEmojiDownloadAndReply(t *testing.T) {
 		t.Fatal("missing preview accepted")
 	}
 	sender := &Sender{Bot: b}
-	id, err := sender.Reply(context.Background(), 111, 55, "✅ <b>Низкий риск NSFW</b>", nil)
+	id, err := sender.Reply(context.Background(), 111, 55, `<tg-emoji emoji-id="5774022692642492953">✅</tg-emoji> <b>Низкий риск NSFW</b>`, nil)
 	if err != nil || id != 77 || replies != 1 {
 		t.Fatal("reply delivery", err)
 	}

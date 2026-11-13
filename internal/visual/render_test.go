@@ -41,6 +41,7 @@ func TestFFmpegFormats(t *testing.T) {
 		{"webp", []string{"-frames:v", "1", "-c:v", "libwebp"}},
 		{"mp4", []string{"-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p"}},
 		{"webm", []string{"-t", "3", "-c:v", "libvpx-vp9"}},
+		{"short.webm", []string{"-t", "0.08", "-c:v", "libvpx-vp9"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := input

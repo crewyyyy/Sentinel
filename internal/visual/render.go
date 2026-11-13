@@ -65,11 +65,12 @@ func (r FFmpeg) Frames(ctx context.Context, data []byte, duration int) ([][]byte
 	frames := 1
 	if animated {
 		frames = MaxFrames
-		// Telegram duration is bounded metadata, not an input to a shell command.
+		// Always keep the first decoded frame: fps rounding can discard an entire
+		// short video emoji when Telegram provides no duration. Later frames are sampled.
 		seconds := min(60, max(1, duration))
-		filter = "fps=" + strconv.Itoa(MaxFrames) + "/" + strconv.Itoa(seconds) + "," + filter
+		filter = "select=eq(n\\,0)+gte(t-prev_selected_t\\," + strconv.Itoa(seconds) + "/" + strconv.Itoa(MaxFrames) + ")," + filter
 	}
-	args := []string{"-nostdin", "-v", "error", "-threads", "1", "-filter_threads", "1", "-protocol_whitelist", "file,pipe", "-max_pixels", "16777216", "-f", format, "-i", input, "-t", "60", "-an", "-sn", "-dn", "-vf", filter, "-frames:v", strconv.Itoa(frames), "-c:v", "png", "-f", "image2pipe", "pipe:1"}
+	args := []string{"-nostdin", "-v", "error", "-threads", "1", "-filter_threads", "1", "-protocol_whitelist", "file,pipe", "-max_pixels", "16777216", "-f", format, "-i", input, "-t", "60", "-an", "-sn", "-dn", "-vf", filter, "-fps_mode", "vfr", "-frames:v", strconv.Itoa(frames), "-c:v", "png", "-f", "image2pipe", "pipe:1"}
 	cmd := exec.CommandContext(limitCtx, name, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

@@ -289,6 +289,9 @@ func TestMediaRetryBudgetUnknownAndLeaseFencing(t *testing.T) {
 		if n := number(t, e, `SELECT count(*) FROM visual_requests WHERE result->>'unavailable'='true' AND result->>'verdict'='review'`); n != 1 {
 			t.Fatal("unknown interpreted as safe")
 		}
+		if n := number(t, e, `SELECT count(*) FROM visual_checks WHERE last_error='animated_preview_missing' AND result->>'error_code'='animated_preview_missing'`); n != 1 {
+			t.Fatal("safe diagnostic code lost")
+		}
 	})
 	t.Run("fence", func(t *testing.T) {
 		e := mediaEngine(t)
